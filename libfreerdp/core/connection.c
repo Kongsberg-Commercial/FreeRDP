@@ -532,21 +532,35 @@ BOOL rdp_client_connect_with_fallback(rdpRdp* rdp)
 	status = rdp_client_connect(rdp);
 
 	if (!status)
-	{
-		WLog_ERR(TAG, "Fallback server connection also failed: %s:%" PRIu32, fallbackAddress,
-		         fallbackPort);
-		/* Restore original settings */
-		freerdp_settings_set_string(settings, FreeRDP_ServerHostname, originalServer);
-		freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, originalPort);
-	}
-	else
-	{
-		WLog_INFO(TAG, "Successfully connected to fallback server: %s:%" PRIu32, fallbackAddress,
-		          fallbackPort);
+{
+    WLog_ERR(TAG, "Fallback server connection also failed: %s:%" PRIu32, fallbackAddress,
+             fallbackPort);
+    /* Restore original settings */
+    freerdp_settings_set_string(settings, FreeRDP_ServerHostname, originalServer);
+    freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, originalPort);
+}
+else
+{
+    WLog_INFO(TAG, "Successfully connected to fallback server: %s:%" PRIu32, fallbackAddress,
+              fallbackPort);
 
-		/* APPEND SERVER INFO TO WINDOW TITLE */
-		append_server_to_window_title(settings);
-	}
+    /* FORCE FULL WINDOW REFRESH AFTER FALLBACK SWITCH */
+    rdpContext* context = rdp->context;
+    if (context && context->update && context->update->RefreshRect)
+    {
+        RECTANGLE_16 area = { 0 };
+        area.left = 0;
+        area.top = 0;
+        area.right = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+        area.bottom = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+
+        if (!context->update->RefreshRect(context, 1, &area))
+            WLog_WARN(TAG, "RefreshRect failed after fallback connection");
+    }
+
+    /* APPEND SERVER INFO TO WINDOW TITLE */
+    append_server_to_window_title(settings);
+}
 
 	free(originalServer);
 	free(fallbackAddress);
@@ -1107,12 +1121,25 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 				/* UPDATE WINDOW TITLE AFTER SUCCESSFUL RECONNECT */
 				append_server_to_window_title(settings);
 
-				/* Trigger DesktopResize to force client to refresh (including reading new window
-				 * title) */
+				/* FORCE FULL WINDOW REFRESH AFTER RECONNECT */
 				rdpContext* context = rdp->context;
 				WINPR_ASSERT(context);
 				WINPR_ASSERT(context->update);
 
+				/* Invalidate entire screen to force full redraw */
+				if (context->update->RefreshRect)
+				{
+					RECTANGLE_16 area = { 0 };
+					area.left = 0;
+					area.top = 0;
+					area.right = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+					area.bottom = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+					
+					if (!context->update->RefreshRect(context, 1, &area))
+						WLog_WARN(TAG, "RefreshRect failed during reconnect");
+				}
+
+				/* Call DesktopResize to update window dimensions if needed */
 				if (context->update->DesktopResize)
 				{
 					if (!context->update->DesktopResize(context))
@@ -1199,12 +1226,25 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 				/* UPDATE WINDOW TITLE AFTER SUCCESSFUL RECONNECT */
 				append_server_to_window_title(settings);
 
-				/* Trigger DesktopResize to force client to refresh (including reading new window
-				 * title) */
+				/* FORCE FULL WINDOW REFRESH AFTER RECONNECT */
 				rdpContext* context = rdp->context;
 				WINPR_ASSERT(context);
 				WINPR_ASSERT(context->update);
 
+				/* Invalidate entire screen to force full redraw */
+				if (context->update->RefreshRect)
+				{
+					RECTANGLE_16 area = { 0 };
+					area.left = 0;
+					area.top = 0;
+					area.right = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+					area.bottom = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+					
+					if (!context->update->RefreshRect(context, 1, &area))
+						WLog_WARN(TAG, "RefreshRect failed during reconnect");
+				}
+
+				/* Call DesktopResize to update window dimensions if needed */
 				if (context->update->DesktopResize)
 				{
 					if (!context->update->DesktopResize(context))
