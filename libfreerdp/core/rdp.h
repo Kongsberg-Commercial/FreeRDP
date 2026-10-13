@@ -210,6 +210,9 @@ struct rdp_rdp
 	WINPR_JSON* wellknown;
 	FreeRDPTimer* timer;
 	WINPR_ATTR_NODISCARD pGetCommonAccessToken GetCommonAccessToken;
+
+	/* Primary port for /fallback-server; the host is kept in RedirectionTargetFQDN */
+	UINT32 fallbackPrimaryPort;
 };
 
 WINPR_ATTR_NODISCARD

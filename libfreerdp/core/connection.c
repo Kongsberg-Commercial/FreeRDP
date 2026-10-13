@@ -455,6 +455,7 @@ BOOL rdp_client_connect_with_fallback(rdpRdp* rdp)
 		          originalPort);
 
 		/* SAVE THE ORIGINAL PRIMARY SERVER FOR FUTURE RECONNECTIONS */
+		rdp->fallbackPrimaryPort = originalPort;
 		if (!freerdp_settings_set_string(settings, FreeRDP_RedirectionTargetFQDN, originalServer))
 		{
 			free(originalServer);
@@ -489,6 +490,7 @@ BOOL rdp_client_connect_with_fallback(rdpRdp* rdp)
 	WLog_INFO(TAG, "Attempting fallback connection to: %s:%" PRIu32, fallbackAddress, fallbackPort);
 
 	/* SAVE THE ORIGINAL PRIMARY SERVER BEFORE SWITCHING TO FALLBACK */
+	rdp->fallbackPrimaryPort = originalPort;
 	if (!freerdp_settings_set_string(settings, FreeRDP_RedirectionTargetFQDN, originalServer))
 	{
 		free(originalServer);
@@ -1054,7 +1056,7 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 	if (savedPrimary && strlen(savedPrimary) > 0)
 	{
 		primaryServer = _strdup(savedPrimary);
-		primaryPort = 3389; /* Default RDP port */
+		primaryPort = rdp->fallbackPrimaryPort ? rdp->fallbackPrimaryPort : 3389;
 	}
 	else
 	{

@@ -1195,8 +1195,6 @@ static void wf_primary_probe_update(wfContext* wfc)
 	wfc->primaryProbeHost = _strdup(primary);
 	if (!wfc->primaryProbeHost)
 		return;
-	/* Matches the port rdp_client_reconnect uses for the primary */
-	wfc->primaryProbePort = 3389;
 
 	wfc->primaryProbeThread = CreateThread(nullptr, 0, wf_primary_probe_thread, wfc, 0, nullptr);
 	if (wfc->primaryProbeThread)
@@ -1215,6 +1213,13 @@ static DWORD WINAPI wf_client_thread(LPVOID lpParam)
 
 	freerdp* instance = (freerdp*)lpParam;
 	WINPR_ASSERT(instance);
+
+	{
+		/* Before connecting, ServerPort is still the primary's port from /v */
+		wfContext* wfcInit = (wfContext*)instance->context;
+		const UINT32 port = freerdp_settings_get_uint32(instance->context->settings, FreeRDP_ServerPort);
+		wfcInit->primaryProbePort = (port > 0) && (port <= UINT16_MAX) ? (UINT16)port : 3389;
+	}
 
 	if (!freerdp_connect(instance))
 		goto end;
