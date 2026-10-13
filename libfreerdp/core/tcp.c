@@ -1069,6 +1069,37 @@ BOOL freerdp_tcp_set_keep_alive_mode(const rdpSettings* settings, int sockfd)
 
 #endif
 #endif
+#if defined(_WIN32)
+	/* Needs Windows 10 1709+; older versions reject these and keep the OS defaults */
+	if (keepalive)
+	{
+		DWORD dwval = freerdp_settings_get_uint32(settings, FreeRDP_TcpKeepAliveDelay);
+		if (setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE, (const char*)&dwval, sizeof(dwval)) < 0)
+			WLog_WARN(TAG, "setsockopt() IPPROTO_TCP, TCP_KEEPIDLE");
+#ifdef TCP_KEEPINTVL
+		dwval = freerdp_settings_get_uint32(settings, FreeRDP_TcpKeepAliveInterval);
+		if (setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPINTVL, (const char*)&dwval, sizeof(dwval)) < 0)
+			WLog_WARN(TAG, "setsockopt() IPPROTO_TCP, TCP_KEEPINTVL");
+#endif
+#ifdef TCP_KEEPCNT
+		dwval = freerdp_settings_get_uint32(settings, FreeRDP_TcpKeepAliveRetries);
+		if (setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPCNT, (const char*)&dwval, sizeof(dwval)) < 0)
+			WLog_WARN(TAG, "setsockopt() IPPROTO_TCP, TCP_KEEPCNT");
+#endif
+	}
+#ifdef TCP_MAXRT
+	{
+		/* Windows counterpart of TCP_USER_TIMEOUT, in seconds instead of milliseconds */
+		const UINT32 ackTimeoutMs = freerdp_settings_get_uint32(settings, FreeRDP_TcpAckTimeout);
+		if (ackTimeoutMs > 0)
+		{
+			const DWORD maxrt = (ackTimeoutMs + 999) / 1000;
+			if (setsockopt(sockfd, IPPROTO_TCP, TCP_MAXRT, (const char*)&maxrt, sizeof(maxrt)) < 0)
+				WLog_WARN(TAG, "setsockopt() IPPROTO_TCP, TCP_MAXRT");
+		}
+	}
+#endif
+#endif
 #if defined(__MACOSX__) || defined(__IOS__)
 	optval = 1;
 	optlen = sizeof(optval);
