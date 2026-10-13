@@ -40,6 +40,26 @@
 
 #include <shellapi.h>
 
+static COMMAND_LINE_ARGUMENT_A wf_custom_args[] = {
+	{ "fallback-switchback", COMMAND_LINE_VALUE_BOOL, nullptr, BoolValueFalse, nullptr, -1,
+	  nullptr,
+	  "automatic switch back to the primary server when it is reachable again (needs "
+	  "/fallback-server and /auto-reconnect)" },
+	{ nullptr, 0, nullptr, nullptr, nullptr, -1, nullptr, nullptr }
+};
+
+static int wf_handle_custom_arg(const COMMAND_LINE_ARGUMENT_A* arg, void* custom)
+{
+	wfContext* wfc = (wfContext*)custom;
+	if (!wfc || !arg || !arg->Name)
+		return COMMAND_LINE_ERROR;
+
+	if (strcmp(arg->Name, "fallback-switchback") == 0)
+		wfc->fallbackSwitchBack = (arg->Value != BoolValueFalse);
+
+	return 0;
+}
+
 INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
 	int status;
@@ -103,10 +123,13 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	if (!settings || !wfc)
 		goto out;
 
-	status = freerdp_client_settings_parse_command_line(settings, argc, argv, FALSE);
+	status = freerdp_client_settings_parse_command_line_ex(
+	    settings, argc, argv, FALSE, wf_custom_args, ARRAYSIZE(wf_custom_args) - 1,
+	    wf_handle_custom_arg, wfc);
 	if (status)
 	{
-		ret = freerdp_client_settings_command_line_status_print(settings, status, argc, argv);
+		ret = freerdp_client_settings_command_line_status_print_ex(settings, status, argc, argv,
+		                                                           wf_custom_args);
 		goto out;
 	}
 

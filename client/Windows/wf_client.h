@@ -141,6 +141,14 @@ extern "C"
 		DispClientContext* disp;
 		UINT64 lastSentDate;
 		BOOL wasMaximized;
+
+		HANDLE primaryProbeThread;
+		HANDLE primaryProbeStop;
+		HANDLE primaryAvailable;
+		char* primaryProbeHost;
+		UINT16 primaryProbePort;
+		BOOL switchingToPrimary;
+		BOOL fallbackSwitchBack;
 	};
 
 	/**

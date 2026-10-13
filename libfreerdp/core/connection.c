@@ -305,8 +305,9 @@ static BOOL append_server_to_window_title(rdpSettings* settings)
 {
 	const char* currentTitle = freerdp_settings_get_string(settings, FreeRDP_WindowTitle);
 
+	/* No /title: given, upstream leaves WindowTitle unset */
 	if (!currentTitle || strlen(currentTitle) == 0)
-		return TRUE;
+		currentTitle = "FreeRDP";
 
 	char* baseTitle = _strdup(currentTitle);
 	if (!baseTitle)
@@ -329,14 +330,6 @@ static BOOL append_server_to_window_title(rdpSettings* settings)
 	const char* primaryServer =
 	    freerdp_settings_get_string(settings, FreeRDP_RedirectionTargetFQDN);
 
-	/* DEBUG: Log all input values */
-	WLog_INFO(TAG, "=== Window Title Update ===");
-	WLog_INFO(TAG, "  baseTitle: %s", baseTitle);
-	WLog_INFO(TAG, "  currentServer: %s (port %" PRIu32 ")",
-	          currentServer ? currentServer : "(null)", currentPort);
-	WLog_INFO(TAG, "  primaryServer: %s", primaryServer ? primaryServer : "(null)");
-	WLog_INFO(TAG, "  fallbackServer: %s", fallbackServer ? fallbackServer : "(null)");
-
 	char newTitle[512] = { 0 };
 
 	/* Only add Primary/Fallback prefix if fallback is configured */
@@ -354,44 +347,27 @@ static BOOL append_server_to_window_title(rdpSettings* settings)
 		if (colon)
 			*colon = '\0';
 
-		WLog_INFO(TAG, "  fallbackCopy (after port strip): %s", fallbackCopy);
-
 		BOOL isUsingFallback = FALSE;
 
 		/* Check if we're connected to fallback by comparing with primary */
 		if (primaryServer && strlen(primaryServer) > 0)
-		{
-			/* We have a saved primary - compare current with it */
-			WLog_INFO(TAG, "  Comparing: strcmp(\"%s\", \"%s\")", currentServer, primaryServer);
-			const int cmpResult = strcmp(currentServer, primaryServer);
-			isUsingFallback = (cmpResult != 0);
-			WLog_INFO(TAG, "  strcmp result: %d, isUsingFallback: %s", cmpResult,
-			          isUsingFallback ? "TRUE" : "FALSE");
-		}
+			isUsingFallback = (strcmp(currentServer, primaryServer) != 0);
 		else
-		{
-			/* No saved primary - compare current with fallback */
-			WLog_INFO(TAG, "  No saved primary, comparing with fallback");
-			WLog_INFO(TAG, "  Comparing: strcmp(\"%s\", \"%s\")", currentServer, fallbackCopy);
-			const int cmpResult = strcmp(currentServer, fallbackCopy);
-			isUsingFallback = (cmpResult == 0);
-			WLog_INFO(TAG, "  strcmp result: %d, isUsingFallback: %s", cmpResult,
-			          isUsingFallback ? "TRUE" : "FALSE");
-		}
+			isUsingFallback = (strcmp(currentServer, fallbackCopy) == 0);
 
 		free(fallbackCopy);
 
 		/* Construct title with Primary/Fallback prefix */
 		if (currentPort != 3389)
-			_snprintf(newTitle, sizeof(newTitle) - 1, "%s - [%s: %s:%" PRIu32 "]", baseTitle,
-			          isUsingFallback ? "Fallback" : "Primary", currentServer, currentPort);
+			_snprintf(newTitle, sizeof(newTitle) - 1, "%s - [Connected to %s: %s:%" PRIu32 "]",
+			          baseTitle, isUsingFallback ? "Fallback" : "Primary", currentServer,
+			          currentPort);
 		else
-			_snprintf(newTitle, sizeof(newTitle) - 1, "%s - [%s: %s]", baseTitle,
+			_snprintf(newTitle, sizeof(newTitle) - 1, "%s - [Connected to %s: %s]", baseTitle,
 			          isUsingFallback ? "Fallback" : "Primary", currentServer);
 	}
 	else
 	{
-		WLog_INFO(TAG, "  No fallback configured, using plain title");
 		/* No fallback configured, just show server without prefix */
 		if (currentPort != 3389)
 			_snprintf(newTitle, sizeof(newTitle) - 1, "%s - [%s:%" PRIu32 "]", baseTitle,
@@ -400,15 +376,9 @@ static BOOL append_server_to_window_title(rdpSettings* settings)
 			_snprintf(newTitle, sizeof(newTitle) - 1, "%s - [%s]", baseTitle, currentServer);
 	}
 
-	WLog_INFO(TAG, "  Final title: %s", newTitle);
+	WLog_DBG(TAG, "Window title: %s", newTitle);
 
 	const BOOL rc = freerdp_settings_set_string(settings, FreeRDP_WindowTitle, newTitle);
-
-	/* VERIFY: Read back what was actually set */
-	const char* verifyTitle = freerdp_settings_get_string(settings, FreeRDP_WindowTitle);
-	WLog_INFO(TAG, "  Verification read: %s", verifyTitle ? verifyTitle : "(null)");
-	WLog_INFO(TAG, "  Setting returned: %s", rc ? "TRUE" : "FALSE");
-	WLog_INFO(TAG, "===========================");
 
 	free(baseTitle);
 	return rc;
@@ -1014,6 +984,20 @@ BOOL rdp_client_redirect(rdpRdp* rdp)
 	return status;
 }
 
+/* Lets the client show reconnect progress; FALSE means the user cancelled */
+static BOOL rdp_client_reconnect_notify(rdpRdp* rdp, UINT32 attempt)
+{
+	freerdp* instance = rdp->context->instance;
+	if (!instance || !instance->RetryDialog)
+		return TRUE;
+	if (instance->RetryDialog(instance, "connection", attempt, NULL) < 0)
+	{
+		WLog_WARN(TAG, "Reconnect cancelled");
+		return FALSE;
+	}
+	return TRUE;
+}
+
 BOOL rdp_client_reconnect(rdpRdp* rdp)
 {
 	BOOL status = FALSE;
@@ -1106,6 +1090,12 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 				return FALSE;
 			}
 
+			if (!rdp_client_reconnect_notify(rdp, currentAttempt))
+			{
+				free(primaryServer);
+				return FALSE;
+			}
+
 			Sleep(1000);
 
 			status = rdp_client_connect(rdp);
@@ -1134,7 +1124,14 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 			}
 
 			if (currentAttempt + 1 < maxRetries)
+			{
+				if (!rdp_client_reconnect_notify(rdp, currentAttempt))
+				{
+					free(primaryServer);
+					return FALSE;
+				}
 				Sleep(3000);
+			}
 		}
 
 		WLog_ERR(TAG, "All %" PRIu32 " reconnection attempts exhausted", maxRetries);
@@ -1166,6 +1163,13 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 
 		if (!freerdp_settings_set_string(settings, FreeRDP_ServerHostname, targetServer) ||
 		    !freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, targetPort))
+		{
+			free(primaryServer);
+			free(fallbackAddress);
+			return FALSE;
+		}
+
+		if (!rdp_client_reconnect_notify(rdp, currentAttempt))
 		{
 			free(primaryServer);
 			free(fallbackAddress);
@@ -1220,6 +1224,13 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 
 		if (currentAttempt + 1 < maxRetries)
 		{
+			/* Second notify keeps the UI pumped during the long wait */
+			if (!rdp_client_reconnect_notify(rdp, currentAttempt))
+			{
+				free(primaryServer);
+				free(fallbackAddress);
+				return FALSE;
+			}
 			WLog_INFO(TAG, "Waiting 3 seconds before next attempt...");
 			Sleep(3000);
 		}

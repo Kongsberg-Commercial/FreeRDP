@@ -23,6 +23,7 @@
 
 #include <winpr/windows.h>
 #include <winpr/library.h>
+#include <ws2tcpip.h>
 
 #include <winpr/crt.h>
 #include <winpr/assert.h>
@@ -1075,6 +1076,134 @@ static BOOL wf_present_gateway_message(freerdp* instance, UINT32 type, BOOL isDi
 	return TRUE;
 }
 
+#define WF_PRIMARY_PROBE_INTERVAL_MS 5000
+#define WF_PRIMARY_PROBE_TIMEOUT_MS 1000
+/* Consecutive successful probes required, avoids flapping on an unstable primary */
+#define WF_PRIMARY_PROBE_REQUIRED_OK 3
+
+static BOOL wf_probe_tcp(const char* host, UINT16 port, DWORD timeoutMs)
+{
+	char service[8] = WINPR_C_ARRAY_INIT;
+	struct addrinfo hints = WINPR_C_ARRAY_INIT;
+	struct addrinfo* result = nullptr;
+	BOOL ok = FALSE;
+
+	(void)_snprintf(service, sizeof(service), "%u", (unsigned)port);
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	if (getaddrinfo(host, service, &hints, &result) != 0)
+		return FALSE;
+
+	for (struct addrinfo* ai = result; ai && !ok; ai = ai->ai_next)
+	{
+		SOCKET s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+		if (s == INVALID_SOCKET)
+			continue;
+
+		u_long nonBlocking = 1;
+		(void)ioctlsocket(s, FIONBIO, &nonBlocking);
+
+		if (connect(s, ai->ai_addr, (int)ai->ai_addrlen) == 0)
+			ok = TRUE;
+		else if (WSAGetLastError() == WSAEWOULDBLOCK)
+		{
+			fd_set wfds;
+			fd_set efds;
+			FD_ZERO(&wfds);
+			FD_ZERO(&efds);
+			FD_SET(s, &wfds);
+			FD_SET(s, &efds);
+			struct timeval tv = { (long)(timeoutMs / 1000), (long)((timeoutMs % 1000) * 1000) };
+			if ((select(0, nullptr, &wfds, &efds, &tv) > 0) && FD_ISSET(s, &wfds))
+				ok = TRUE;
+		}
+		closesocket(s);
+	}
+
+	freeaddrinfo(result);
+	return ok;
+}
+
+static DWORD WINAPI wf_primary_probe_thread(LPVOID arg)
+{
+	wfContext* wfc = (wfContext*)arg;
+	WINPR_ASSERT(wfc);
+
+	UINT32 okCount = 0;
+	while (WaitForSingleObject(wfc->primaryProbeStop, WF_PRIMARY_PROBE_INTERVAL_MS) == WAIT_TIMEOUT)
+	{
+		if (wf_probe_tcp(wfc->primaryProbeHost, wfc->primaryProbePort, WF_PRIMARY_PROBE_TIMEOUT_MS))
+			okCount++;
+		else
+			okCount = 0;
+
+		if (okCount >= WF_PRIMARY_PROBE_REQUIRED_OK)
+		{
+			WLog_INFO(TAG, "Primary server %s:%u is reachable again", wfc->primaryProbeHost,
+			          (unsigned)wfc->primaryProbePort);
+			(void)SetEvent(wfc->primaryAvailable);
+			break;
+		}
+	}
+	return 0;
+}
+
+static void wf_primary_probe_stop(wfContext* wfc)
+{
+	if (wfc->primaryProbeThread)
+	{
+		(void)SetEvent(wfc->primaryProbeStop);
+		(void)WaitForSingleObject(wfc->primaryProbeThread, INFINITE);
+		(void)CloseHandle(wfc->primaryProbeThread);
+		wfc->primaryProbeThread = nullptr;
+	}
+	if (wfc->primaryAvailable)
+		(void)ResetEvent(wfc->primaryAvailable);
+	free(wfc->primaryProbeHost);
+	wfc->primaryProbeHost = nullptr;
+}
+
+/* Starts watching the primary when the current session is on the fallback */
+static void wf_primary_probe_update(wfContext* wfc)
+{
+	wf_primary_probe_stop(wfc);
+
+	if (!wfc->fallbackSwitchBack)
+		return;
+
+	const rdpSettings* settings = wfc->common.context.settings;
+	if (!freerdp_settings_get_bool(settings, FreeRDP_AutoReconnectionEnabled))
+		return;
+
+	const char* fallback =
+	    freerdp_settings_get_string(settings, FreeRDP_RedirectionTargetNetBiosName);
+	const char* primary = freerdp_settings_get_string(settings, FreeRDP_RedirectionTargetFQDN);
+	const char* current = freerdp_settings_get_string(settings, FreeRDP_ServerHostname);
+	if (!fallback || !*fallback || !primary || !*primary || !current)
+		return;
+	if (strcmp(current, primary) == 0)
+		return;
+
+	if (!wfc->primaryProbeStop)
+		wfc->primaryProbeStop = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+	if (!wfc->primaryAvailable)
+		wfc->primaryAvailable = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+	if (!wfc->primaryProbeStop || !wfc->primaryAvailable)
+		return;
+	(void)ResetEvent(wfc->primaryProbeStop);
+
+	wfc->primaryProbeHost = _strdup(primary);
+	if (!wfc->primaryProbeHost)
+		return;
+	/* Matches the port rdp_client_reconnect uses for the primary */
+	wfc->primaryProbePort = 3389;
+
+	wfc->primaryProbeThread = CreateThread(nullptr, 0, wf_primary_probe_thread, wfc, 0, nullptr);
+	if (wfc->primaryProbeThread)
+		WLog_INFO(TAG, "On fallback server, monitoring primary %s:%u", wfc->primaryProbeHost,
+		          (unsigned)wfc->primaryProbePort);
+}
+
 static DWORD WINAPI wf_client_thread(LPVOID lpParam)
 {
 	MSG msg = WINPR_C_ARRAY_INIT;
@@ -1102,10 +1231,15 @@ static DWORD WINAPI wf_client_thread(LPVOID lpParam)
 	rdpSettings* settings = context->settings;
 	WINPR_ASSERT(settings);
 
+	wf_primary_probe_update(wfc);
+
 	while (!freerdp_shall_disconnect_context(instance->context))
 	{
 		HANDLE handles[MAXIMUM_WAIT_OBJECTS] = WINPR_C_ARRAY_INIT;
 		DWORD nCount = 0;
+
+		if (wfc->primaryProbeThread)
+			handles[nCount++] = wfc->primaryAvailable;
 
 		if (freerdp_focus_required(instance))
 		{
@@ -1133,11 +1267,31 @@ static DWORD WINAPI wf_client_thread(LPVOID lpParam)
 			break;
 		}
 
+		if (wfc->primaryProbeThread &&
+		    (WaitForSingleObject(wfc->primaryAvailable, 0) == WAIT_OBJECT_0))
+		{
+			wf_primary_probe_stop(wfc);
+			WLog_INFO(TAG, "Switching back to primary server");
+			wfc->switchingToPrimary = TRUE;
+			const BOOL switched = client_auto_reconnect(instance);
+			wfc->switchingToPrimary = FALSE;
+			if (!switched)
+			{
+				WLog_ERR(TAG, "Failed to switch back to primary server");
+				break;
+			}
+			wf_primary_probe_update(wfc);
+			continue;
+		}
+
 		{
 			if (!freerdp_check_event_handles(context))
 			{
 				if (client_auto_reconnect(instance))
+				{
+					wf_primary_probe_update(wfc);
 					continue;
+				}
 
 				WLog_ERR(TAG, "Failed to check FreeRDP file descriptor");
 				break;
@@ -1202,6 +1356,13 @@ static DWORD WINAPI wf_client_thread(LPVOID lpParam)
 	}
 
 	/* cleanup */
+	wf_primary_probe_stop(wfc);
+	if (wfc->primaryProbeStop)
+		(void)CloseHandle(wfc->primaryProbeStop);
+	if (wfc->primaryAvailable)
+		(void)CloseHandle(wfc->primaryAvailable);
+	wfc->primaryProbeStop = nullptr;
+	wfc->primaryAvailable = nullptr;
 	freerdp_disconnect(instance);
 
 end:
@@ -1428,6 +1589,98 @@ static void wfreerdp_client_global_uninit(void)
 	WSACleanup();
 }
 
+static void wf_draw_reconnect_overlay(wfContext* wfc, const WCHAR* text)
+{
+	RECT rc = WINPR_C_ARRAY_INIT;
+	HDC hdc = GetDC(wfc->hwnd);
+	if (!hdc)
+		return;
+
+	GetClientRect(wfc->hwnd, &rc);
+	SetBkMode(hdc, TRANSPARENT);
+
+	const LONG bannerHeight = 80;
+	const LONG midY = (rc.top + rc.bottom) / 2;
+	RECT banner = { rc.left, midY - bannerHeight / 2, rc.right, midY + bannerHeight / 2 };
+	FillRect(hdc, &banner, (HBRUSH)GetStockObject(BLACK_BRUSH));
+
+	HFONT font = CreateFontW(-24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+	                         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+	                         DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+	HGDIOBJ oldFont = font ? SelectObject(hdc, font) : nullptr;
+	SetTextColor(hdc, RGB(255, 255, 255));
+	DrawTextW(hdc, text, -1, &banner, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+	if (font)
+	{
+		SelectObject(hdc, oldFont);
+		DeleteObject(font);
+	}
+	ReleaseDC(wfc->hwnd, hdc);
+}
+
+/* Called on the window thread while reconnecting, so it must also pump messages */
+static SSIZE_T wf_retry_dialog(freerdp* instance, const char* what, size_t current, void* userarg)
+{
+	WINPR_ASSERT(instance);
+	wfContext* wfc = (wfContext*)instance->context;
+	WINPR_ASSERT(wfc);
+
+	if (wfc->hwnd && what && (strcmp(what, "connection") == 0))
+	{
+		MSG msg = WINPR_C_ARRAY_INIT;
+		while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+		{
+			if (msg.message == WM_QUIT)
+			{
+				(void)freerdp_abort_connect_context(instance->context);
+				return -1;
+			}
+
+			/* No session to send input to */
+			if (((msg.message >= WM_KEYFIRST) && (msg.message <= WM_KEYLAST)) ||
+			    ((msg.message >= WM_MOUSEFIRST) && (msg.message <= WM_MOUSELAST)))
+				continue;
+
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+
+		const rdpSettings* settings = instance->context->settings;
+		const char* host = freerdp_settings_get_string(settings, FreeRDP_ServerHostname);
+		const unsigned max =
+		    (unsigned)freerdp_settings_get_uint32(settings, FreeRDP_AutoReconnectMaxRetries);
+		const unsigned attempt = (unsigned)current + 1;
+
+		WCHAR text[256] = WINPR_C_ARRAY_INIT;
+		_snwprintf_s(text, ARRAYSIZE(text), _TRUNCATE, L"%s - connecting to %S (attempt %u of %u)",
+		             wfc->switchingToPrimary ? L"Primary available again" : L"Connection lost",
+		             host ? host : "", attempt, max);
+		wf_draw_reconnect_overlay(wfc, text);
+
+		WCHAR* baseTitle = nullptr;
+		const char* title = freerdp_settings_get_string(settings, FreeRDP_WindowTitle);
+		if (title)
+			baseTitle = ConvertUtf8ToWCharAlloc(title, nullptr);
+		if (baseTitle)
+		{
+			WCHAR* suffix = wcsstr(baseTitle, L" - [");
+			if (suffix)
+				*suffix = L'\0';
+		}
+
+		WCHAR newTitle[512] = WINPR_C_ARRAY_INIT;
+		_snwprintf_s(newTitle, ARRAYSIZE(newTitle), _TRUNCATE,
+		             L"%s - [%s - connecting to %S, attempt %u/%u]",
+		             baseTitle ? baseTitle : L"FreeRDP",
+		             wfc->switchingToPrimary ? L"SWITCHING TO PRIMARY" : L"DISCONNECTED",
+		             host ? host : "", attempt, max);
+		free(baseTitle);
+		SetWindowTextW(wfc->hwnd, newTitle);
+	}
+
+	return client_common_retry_dialog(instance, what, current, userarg);
+}
+
 static BOOL wfreerdp_client_new(freerdp* instance, rdpContext* context)
 {
 	wfContext* wfc = (wfContext*)context;
@@ -1457,6 +1710,7 @@ static BOOL wfreerdp_client_new(freerdp* instance, rdpContext* context)
 	instance->PostDisconnect = wf_post_disconnect;
 	instance->AuthenticateEx = wf_authenticate_ex;
 	instance->GetAccessToken = client_failsafe_get_access_token;
+	instance->RetryDialog = wf_retry_dialog;
 
 #ifdef WITH_WINDOWS_CERT_STORE
 	if (!freerdp_settings_set_bool(context->settings, FreeRDP_CertificateCallbackPreferPEM, TRUE))
