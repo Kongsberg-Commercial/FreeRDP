@@ -254,20 +254,12 @@ NSString *TSXAppFullVersion()
 
 BOOL IsPad()
 {
-#ifdef UI_USER_INTERFACE_IDIOM
-	return (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
-#else
-	return NO;
-#endif
+	return ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad);
 }
 
 BOOL IsPhone()
 {
-#ifdef UI_USER_INTERFACE_IDIOM
-	return (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPhone);
-#else
-	return NO;
-#endif
+	return ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPhone);
 }
 
 // set mouse buttons swapped flag
@@ -324,15 +316,6 @@ int GetMouseWheelEvent(BOOL down)
 CGFloat GetScrollGestureDelta()
 {
 	return 10.0f;
-}
-
-// this hack activates the iphone's WWAN interface in case it is offline
-void WakeUpWWAN()
-{
-	NSURL *url = [[[NSURL alloc] initWithString:@"http://www.nonexistingdummyurl.com"] autorelease];
-	// NSData * data =
-	[NSData dataWithContentsOfURL:url]; // we don't need data but assigning one causes a "data not
-	                                    // used" compiler warning
 }
 
 #pragma mark System Info functions

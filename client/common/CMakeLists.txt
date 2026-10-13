@@ -30,7 +30,12 @@ set(SRCS
     client_cliprdr_file.c
     geometry.c
     smartcard_cli.c
+    aad_helper.c
+    oauth2.h
+    oauth2.c
 )
+
+add_compile_definitions(CMAKE_EXECUTABLE_SUFFIX="${CMAKE_EXECUTABLE_SUFFIX}")
 
 foreach(FREERDP_CHANNELS_CLIENT_SRC ${FREERDP_CHANNELS_CLIENT_SRCS})
   get_filename_component(NINC ${FREERDP_CHANNELS_CLIENT_SRC} PATH)
@@ -50,16 +55,20 @@ else()
   set(OPT_FUSE_DEFAULT OFF)
 endif()
 
+option(WITH_EMBEDDED_CLI_IN_RDP_FILES "[dangrous] allow embedded cli arguments in rdp files" OFF)
+if(WITH_EMBEDDED_CLI_IN_RDP_FILES)
+  add_compile_definitions(WITH_EMBEDDED_CLI_IN_RDP_FILES)
+endif()
+
 option(WITH_FUSE "Build clipboard with FUSE file copy support" ${OPT_FUSE_DEFAULT})
 if(WITH_FUSE)
   find_package(PkgConfig REQUIRED)
 
-  pkg_check_modules(FUSE3 REQUIRED fuse3)
+  pkg_check_modules(FUSE3 REQUIRED IMPORTED_TARGET GLOBAL fuse3)
   freerdp_client_pc_add_requires_private("fuse3")
 
-  include_directories(SYSTEM ${FUSE3_INCLUDE_DIRS})
   add_compile_definitions(WITH_FUSE)
-  list(APPEND PRIV_LIBS ${FUSE3_LIBRARIES})
+  list(APPEND PRIV_LIBS PkgConfig::FUSE3)
 
   add_compile_definitions(_FILE_OFFSET_BITS=64)
 endif()
@@ -114,6 +123,31 @@ installwithrpath(
 )
 
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "Client/Common")
+
+option(WITH_WEBVIEW_AAD_AUTH_HELPER
+       "Build the out-of-process webview-based AAD auth helper (used for AAD login popups)" OFF
+)
+if(WITH_WEBVIEW_AAD_AUTH_HELPER)
+  add_subdirectory(webview-aad-helper)
+endif()
+
+option(WITH_QT_AAD_AUTH_HELPER "Build the out-of-process Qt-based AAD auth helper (used for AAD login popups)" OFF)
+if(WITH_QT_AAD_AUTH_HELPER)
+  add_subdirectory(qt-aad-helper)
+endif()
+
+# relies on .desktop files / xdg-mime / xdg-open, i.e. the freedesktop.org conventions - only
+# meaningful on Linux/BSD-style desktops, not Windows, macOS or Android.
+if(NOT APPLE AND NOT WIN32 AND NOT ANDROID)
+  option(WITH_XDG_AAD_AUTH_HELPER "Build the out-of-process xdg-open-based AAD auth helper (used for AAD login popups)"
+         OFF
+  )
+else()
+  set(WITH_XDG_AAD_AUTH_HELPER OFF CACHE INTERNAL "unsupported platform")
+endif()
+if(WITH_XDG_AAD_AUTH_HELPER)
+  add_subdirectory(xdg-aad-helper)
+endif()
 
 if(BUILD_TESTING_INTERNAL OR BUILD_TESTING)
   add_subdirectory(test)

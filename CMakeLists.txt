@@ -23,7 +23,11 @@ cmake_minimum_required(VERSION 3.13)
 if(POLICY CMP0091)
   cmake_policy(SET CMP0091 NEW)
 endif()
+if(POLICY CMP0177)
+  cmake_policy(SET CMP0177 NEW)
+endif()
 project(FreeRDP LANGUAGES C)
+set(PROJECT_ISSUE_URL https://github.com/FreeRDP/FreeRDP/issues)
 
 add_custom_target(fuzzers COMMENT "Build fuzzers")
 
@@ -239,17 +243,6 @@ add_compile_definitions(FREERDP_EXPORTS)
 
 # Mac OS X
 if(APPLE)
-  if(IOS)
-    if(NOT FREERDP_IOS_EXTERNAL_SSL_PATH)
-      message(
-        STATUS
-          "FREERDP_IOS_EXTERNAL_SSL_PATH not set! Required if openssl is not found in the iOS SDK (which usually isn't"
-      )
-    endif()
-    set(CMAKE_FIND_ROOT_PATH ${CMAKE_FIND_ROOT_PATH} ${FREERDP_IOS_EXTERNAL_SSL_PATH})
-    set_property(GLOBAL PROPERTY XCODE_ATTRIBUTE_SKIP_INSTALL YES)
-  endif(IOS)
-
   # Temporarily disabled, causes the cmake script to be reexecuted, causing the compilation to fail.
   # Workaround: specify the parameter in the command-line
   #	if(WITH_CLANG)
@@ -265,22 +258,7 @@ endif(APPLE)
 if(ANDROID)
   set_property(GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS ${ANDROID_LIBRARY_USE_LIB64_PATHS})
 
-  if(ANDROID_ABI STREQUAL arm64-v8a)
-    include(CheckCCompilerFlag)
-    check_c_compiler_flag("-mfloat-abi=softfp" ABI_SOFTFP_SUPPORTED)
-
-    if(ABI_SOFTFP_SUPPORTED)
-      # https://github.com/android/ndk/issues/910
-      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfloat-abi=softfp")
-    endif()
-  endif()
-
   add_compile_definitions("$<$<CONFIG:Debug>:NDK_DEBUG=1>")
-
-  # NOTE: Manually add -gdwarf-3, as newer toolchains default to -gdwarf-4,
-  #       which is not supported by the gdbserver binary shipped with
-  #       the android NDK (tested with r9b)
-  add_compile_options("$<$<CONFIG:Debug>:-gdwarf-3>")
   add_link_options(-llog)
 
   # CMAKE_PREFIX_PATH detection is broken in most Android toolchain files
@@ -298,8 +276,8 @@ if(ANDROID)
 
   list(APPEND CMAKE_INCLUDE_PATH ${FREERDP_EXTERNAL_PATH}/${ANDROID_ABI}/include)
   list(APPEND CMAKE_LIBRARY_PATH ${FREERDP_EXTERNAL_PATH}/${ANDROID_ABI}/)
-  set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)
-  set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
+  set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+  set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 
   if(WITH_GPROF)
     configure_file(
@@ -361,6 +339,10 @@ set(AOM_FEATURE_TYPE "OPTIONAL")
 set(AOM_FEATURE_PURPOSE "codec")
 set(AOM_FEATURE_DESCRIPTION "AOM AV1 encoder/decoder library")
 
+set(DAV1D_FEATURE_TYPE "OPTIONAL")
+set(DAV1D_FEATURE_PURPOSE "codec")
+set(DAV1D_FEATURE_DESCRIPTION "dav1d AV1 decoder library")
+
 set(YUV_FEATURE_TYPE "OPTIONAL")
 set(YUV_FEATURE_PURPOSE "codec")
 set(YUV_FEATURE_DESCRIPTION "YUV encoder/decoder library")
@@ -406,6 +388,10 @@ else()
   find_feature(MbedTLS ${MBEDTLS_FEATURE_TYPE} ${MBEDTLS_FEATURE_PURPOSE} ${MBEDTLS_FEATURE_DESCRIPTION})
 endif()
 
+option(WITH_TLS_DATA_LIMIT "Enforce TLS AEAD data limit (RFC 8446 5.5): rekey on TLS 1.3, cut if a TLS 1.3 rekey fails"
+       OFF
+)
+
 find_feature(PCSC ${PCSC_FEATURE_TYPE} ${PCSC_FEATURE_PURPOSE} ${PCSC_FEATURE_DESCRIPTION})
 
 if(WITH_DSP_FFMPEG OR WITH_VIDEO_FFMPEG OR WITH_FFMPEG)
@@ -419,6 +405,7 @@ find_feature(FAAD2 ${FAAD2_FEATURE_TYPE} ${FAAD2_FEATURE_PURPOSE} ${FAAD2_FEATUR
 find_feature(FAAC ${FAAC_FEATURE_TYPE} ${FAAC_FEATURE_PURPOSE} ${FAAC_FEATURE_DESCRIPTION})
 find_feature(soxr ${SOXR_FEATURE_TYPE} ${SOXR_FEATURE_PURPOSE} ${SOXR_FEATURE_DESCRIPTION})
 find_feature(aom ${AOM_FEATURE_TYPE} ${AOM_FEATURE_PURPOSE} ${AOM_FEATURE_DESCRIPTION})
+find_feature(dav1d ${DAV1D_FEATURE_TYPE} ${DAV1D_FEATURE_PURPOSE} ${DAV1D_FEATURE_DESCRIPTION})
 find_feature(yuv ${YUV_FEATURE_TYPE} ${YUV_FEATURE_PURPOSE} ${YUV_FEATURE_DESCRIPTION})
 
 option(WITH_OPENCL "[experimental] enable OpenCL support for primitives" OFF)
@@ -486,13 +473,17 @@ if(NOT WITH_ABSOLUTE_PLUGIN_LOAD_PATHS)
     set(FREERDP_INSTALL_PREFIX ".")
   endif()
   set(FREERDP_LIBRARY_PATH ".")
+  set(FREERDP_LIBEXEC_REL_PATH ".")
+  set(FREERDP_LIBEXEC_PATH ".")
   set(FREERDP_PLUGIN_PATH ".")
 else()
   set(FREERDP_DATA_PATH "${CMAKE_INSTALL_PREFIX}/share/${FREERDP_MAJOR_DIR}")
   if(NOT FREERDP_INSTALL_PREFIX)
     set(FREERDP_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
   endif()
+  set(FREERDP_LIBEXEC_PATH "${CMAKE_INSTALL_LIBEXECDIR}")
   set(FREERDP_LIBRARY_PATH "${CMAKE_INSTALL_LIBDIR}")
+  file(RELATIVE_PATH FREERDP_LIBEXEC_REL_PATH "${CMAKE_INSTALL_FULL_BINDIR}" "${CMAKE_INSTALL_FULL_LIBEXECDIR}")
   if(WIN32)
     set(FREERDP_PLUGIN_PATH "${CMAKE_INSTALL_BINDIR}/${FREERDP_MAJOR_DIR}")
   else()

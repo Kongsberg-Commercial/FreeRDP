@@ -54,6 +54,7 @@ BuildRequires: libpng-devel
 BuildRequires: libwebp-devel
 BuildRequires: fuse3-devel
 BuildRequires: pam-devel
+BuildRequires: libva-devel
 BuildRequires: libicu-devel
 BuildRequires: libv4l-devel
 BuildRequires: libcbor-devel
@@ -99,7 +100,7 @@ BuildRequires: dbus-glib-devel
 BuildRequires: libjpeg-turbo-devel
 BuildRequires: libasan
 BuildRequires: compiler-rt
-BuildRequires: (webkit2gtk4.1-devel or webkit2gtk4.0-devel)
+BuildRequires: (webkitgtk6.0-devel or webkit2gtk4.1-devel or webkit2gtk4.0-devel)
 BuildRequires: libjpeg-turbo-devel
 BuildRequires: wayland-devel
 %endif
@@ -142,11 +143,14 @@ cp %{_sourcedir}/source_version freerdp-nightly-%{version}/.source_version
     -DCMAKE_SKIP_INSTALL_RPATH=FALSE \
     -DWITH_FREERDP_DEPRECATED_COMMANDLINE=ON \
     -DWITH_PULSE=ON \
+    -DWITHOUT_WINPR_3x_DEPRECATED=ON \
+    -DWITHOUT_FREERDP_3x_DEPRECATED=ON \
     -DWITH_CHANNELS=ON \
     -DWITH_CUPS=ON \
     -DWITH_PCSC=ON \
     -DWITH_JPEG=ON \
     -DWITH_OPUS=ON \
+    -DWITH_GFX_AZURE=ON \
     -DWITH_OPENH264=ON \
     -DWITH_OPENH264_LOADING=ON \
     -DWITH_INTERNAL_RC4=ON \
@@ -195,6 +199,7 @@ cp %{_sourcedir}/source_version freerdp-nightly-%{version}/.source_version
     -DCHANNEL_RDPEWA_CLIENT=ON \
     -DCHANNEL_SSHAGENT=ON \
     -DCHANNEL_SSHAGENT_CLIENT=ON \
+    -DWITH_XDG_AAD_AUTH_HELPER=ON \
     -DWITH_SERVER=ON \
     -DWITH_CAIRO=ON \
     -DBUILD_TESTING=ON \

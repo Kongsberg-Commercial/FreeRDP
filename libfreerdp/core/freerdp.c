@@ -36,6 +36,7 @@
 #include "message.h"
 #include <freerdp/buildflags.h>
 #include "gateway/rpc_fault.h"
+#include "../cache/cache.h"
 
 #include <winpr/assert.h>
 
@@ -640,9 +641,12 @@ BOOL freerdp_disconnect(freerdp* instance)
 	}
 
 	IFCALL(instance->PostDisconnect, instance);
+	cache_free(instance->context->cache);
+	instance->context->cache = nullptr;
 
 	if (up)
 	{
+		update_dump_stats(rdp->update);
 		if (up->pcap_rfx)
 		{
 			up->dump_rfx = FALSE;
@@ -790,7 +794,9 @@ static wEventType FreeRDP_Events[] = {
 	DEFINE_EVENT_ENTRY(ConnectionResult),    DEFINE_EVENT_ENTRY(ChannelConnected),
 	DEFINE_EVENT_ENTRY(ChannelDisconnected), DEFINE_EVENT_ENTRY(MouseEvent),
 	DEFINE_EVENT_ENTRY(Activated),           DEFINE_EVENT_ENTRY(Timer),
-	DEFINE_EVENT_ENTRY(GraphicsReset),       DEFINE_EVENT_ENTRY(UserNotification)
+	DEFINE_EVENT_ENTRY(GraphicsReset),       DEFINE_EVENT_ENTRY(UserNotification),
+	DEFINE_EVENT_ENTRY(ChannelInitialized),  DEFINE_EVENT_ENTRY(ChannelTerminated),
+	DEFINE_EVENT_ENTRY(StateChanged)
 };
 
 /** Allocator function for a rdp context.
@@ -1251,8 +1257,10 @@ const char* freerdp_get_logon_error_info_data_ex(UINT32 data, char* buffer, size
  */
 freerdp* freerdp_new(void)
 {
-	freerdp* instance = nullptr;
-	instance = (freerdp*)calloc(1, sizeof(freerdp));
+	if (!utils_set_umask())
+		return nullptr;
+
+	freerdp* instance = (freerdp*)calloc(1, sizeof(freerdp));
 
 	if (!instance)
 		return nullptr;

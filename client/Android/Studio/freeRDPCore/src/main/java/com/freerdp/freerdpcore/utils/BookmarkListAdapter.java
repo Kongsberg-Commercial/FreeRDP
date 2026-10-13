@@ -1,6 +1,11 @@
 /*
    RecyclerView adapter for bookmark list items
 
+   Copyright 2026 Ibrahim Sevinc <ibrahim.sevinc.mail@gmail.com>
+
+   This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+   If a copy of the MPL was not distributed with this file, You can obtain one at
+   http://mozilla.org/MPL/2.0/.
 */
 
 package com.freerdp.freerdpcore.utils;
@@ -30,6 +35,7 @@ public class BookmarkListAdapter extends RecyclerView.Adapter<BookmarkListAdapte
 	{
 		void onItemClick(String refStr);
 		void onDelete(long id);
+		void onExport(BookmarkBase bookmark);
 	}
 
 	private List<BookmarkBase> items = new ArrayList<>();
@@ -86,9 +92,10 @@ public class BookmarkListAdapter extends RecyclerView.Adapter<BookmarkListAdapte
 				final String finalRefStr = refStr;
 				final long bookmarkId = bookmark.getId();
 				holder.binding.bookmarkIcon2.setOnClickListener(
-				    v -> showBookmarkMenu(v, finalRefStr, bookmarkId));
+				    v -> showBookmarkMenu(v, finalRefStr, bookmarkId, bookmark));
 				holder.itemView.setOnLongClickListener(v -> {
-					showBookmarkMenu(holder.binding.bookmarkIcon2, finalRefStr, bookmarkId);
+					showBookmarkMenu(holder.binding.bookmarkIcon2, finalRefStr, bookmarkId,
+					                 bookmark);
 					return true;
 				});
 			}
@@ -154,7 +161,8 @@ public class BookmarkListAdapter extends RecyclerView.Adapter<BookmarkListAdapte
 		return items.size();
 	}
 
-	private void showBookmarkMenu(View anchor, String refStr, long bookmarkId)
+	private void showBookmarkMenu(View anchor, String refStr, long bookmarkId,
+	                              BookmarkBase bookmark)
 	{
 		PopupMenu popup = new PopupMenu(anchor.getContext(), anchor);
 		popup.inflate(R.menu.bookmark_context_menu);
@@ -179,6 +187,12 @@ public class BookmarkListAdapter extends RecyclerView.Adapter<BookmarkListAdapte
 			{
 				if (callbacks != null)
 					callbacks.onDelete(bookmarkId);
+				return true;
+			}
+			else if (itemId == R.id.bookmark_export)
+			{
+				if (callbacks != null)
+					callbacks.onExport(bookmark);
 				return true;
 			}
 			return false;

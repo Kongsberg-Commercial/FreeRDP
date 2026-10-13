@@ -16,9 +16,7 @@ static void free_string(char** current, BOOL cleanup)
 {
 	if (cleanup)
 	{
-		if (*current)
-			memset(*current, 0, strlen(*current));
-		free(*current);
+		winpr_zfree(*current);
 		(*current) = nullptr;
 	}
 }
@@ -109,9 +107,6 @@ BOOL freerdp_settings_get_bool(WINPR_ATTR_UNUSED const rdpSettings* settings,
 
 		case FreeRDP_AutoReconnectionEnabled:
 			return settings->AutoReconnectionEnabled;
-
-		case FreeRDP_SessionHasBeenReconnected:
-			return settings->SessionHasBeenReconnected;
 
 		case FreeRDP_AutoReconnectionPacketSupported:
 			return settings->AutoReconnectionPacketSupported;
@@ -518,6 +513,9 @@ BOOL freerdp_settings_get_bool(WINPR_ATTR_UNUSED const rdpSettings* settings,
 		case FreeRDP_ServerMode:
 			return settings->ServerMode;
 
+		case FreeRDP_SessionHasBeenReconnected:
+			return settings->SessionHasBeenReconnected;
+
 		case FreeRDP_SmartSizing:
 			return settings->SmartSizing;
 
@@ -739,10 +737,6 @@ BOOL freerdp_settings_set_bool(WINPR_ATTR_UNUSED rdpSettings* settings,
 
 		case FreeRDP_AutoReconnectionEnabled:
 			settings->AutoReconnectionEnabled = cnv.c;
-			break;
-
-		case FreeRDP_SessionHasBeenReconnected:
-			settings->SessionHasBeenReconnected = cnv.c;
 			break;
 
 		case FreeRDP_AutoReconnectionPacketSupported:
@@ -1285,6 +1279,10 @@ BOOL freerdp_settings_set_bool(WINPR_ATTR_UNUSED rdpSettings* settings,
 			settings->ServerMode = cnv.c;
 			break;
 
+		case FreeRDP_SessionHasBeenReconnected:
+			settings->SessionHasBeenReconnected = cnv.c;
+			break;
+
 		case FreeRDP_SmartSizing:
 			settings->SmartSizing = cnv.c;
 			break;
@@ -1784,6 +1782,9 @@ UINT32 freerdp_settings_get_uint32(WINPR_ATTR_UNUSED const rdpSettings* settings
 		case FreeRDP_GatewayPort:
 			return settings->GatewayPort;
 
+		case FreeRDP_GatewayResponseTimeout:
+			return settings->GatewayResponseTimeout;
+
 		case FreeRDP_GatewayUsageMethod:
 			return settings->GatewayUsageMethod;
 
@@ -1921,6 +1922,9 @@ UINT32 freerdp_settings_get_uint32(WINPR_ATTR_UNUSED const rdpSettings* settings
 
 		case FreeRDP_RedirectionTsvUrlLength:
 			return settings->RedirectionTsvUrlLength;
+
+		case FreeRDP_RemoteAppFeatureFlags:
+			return settings->RemoteAppFeatureFlags;
 
 		case FreeRDP_RemoteAppNumIconCacheEntries:
 			return settings->RemoteAppNumIconCacheEntries;
@@ -2238,6 +2242,10 @@ BOOL freerdp_settings_set_uint32(WINPR_ATTR_UNUSED rdpSettings* settings,
 			settings->GatewayPort = cnv.c;
 			break;
 
+		case FreeRDP_GatewayResponseTimeout:
+			settings->GatewayResponseTimeout = cnv.c;
+			break;
+
 		case FreeRDP_GatewayUsageMethod:
 			settings->GatewayUsageMethod = cnv.c;
 			break;
@@ -2420,6 +2428,10 @@ BOOL freerdp_settings_set_uint32(WINPR_ATTR_UNUSED rdpSettings* settings,
 
 		case FreeRDP_RedirectionTsvUrlLength:
 			settings->RedirectionTsvUrlLength = cnv.c;
+			break;
+
+		case FreeRDP_RemoteAppFeatureFlags:
+			settings->RemoteAppFeatureFlags = cnv.c;
 			break;
 
 		case FreeRDP_RemoteAppNumIconCacheEntries:
@@ -2744,6 +2756,9 @@ const char* freerdp_settings_get_string(WINPR_ATTR_UNUSED const rdpSettings* set
 
 	switch (id)
 	{
+		case FreeRDP_AadAuthHelper:
+			return settings->AadAuthHelper;
+
 		case FreeRDP_AadServerHostname:
 			return settings->AadServerHostname;
 
@@ -2807,6 +2822,9 @@ const char* freerdp_settings_get_string(WINPR_ATTR_UNUSED const rdpSettings* set
 		case FreeRDP_ContainerName:
 			return settings->ContainerName;
 
+		case FreeRDP_CorrelationId:
+			return settings->CorrelationId;
+
 		case FreeRDP_CspName:
 			return settings->CspName;
 
@@ -2824,6 +2842,9 @@ const char* freerdp_settings_get_string(WINPR_ATTR_UNUSED const rdpSettings* set
 
 		case FreeRDP_DynamicDSTTimeZoneKeyName:
 			return settings->DynamicDSTTimeZoneKeyName;
+
+		case FreeRDP_EndpointFedAuthToken:
+			return settings->EndpointFedAuthToken;
 
 		case FreeRDP_GatewayAcceptedCert:
 			return settings->GatewayAcceptedCert;
@@ -3031,6 +3052,9 @@ const char* freerdp_settings_get_string(WINPR_ATTR_UNUSED const rdpSettings* set
 
 		case FreeRDP_SmartcardPrivateKey:
 			return settings->SmartcardPrivateKey;
+
+		case FreeRDP_SspiClientHostname:
+			return settings->SspiClientHostname;
 
 		case FreeRDP_SspiModule:
 			return settings->SspiModule;
@@ -3076,6 +3100,9 @@ char* freerdp_settings_get_string_writable(rdpSettings* settings, FreeRDP_Settin
 
 	switch (id)
 	{
+		case FreeRDP_AadAuthHelper:
+			return settings->AadAuthHelper;
+
 		case FreeRDP_AadServerHostname:
 			return settings->AadServerHostname;
 
@@ -3139,6 +3166,9 @@ char* freerdp_settings_get_string_writable(rdpSettings* settings, FreeRDP_Settin
 		case FreeRDP_ContainerName:
 			return settings->ContainerName;
 
+		case FreeRDP_CorrelationId:
+			return settings->CorrelationId;
+
 		case FreeRDP_CspName:
 			return settings->CspName;
 
@@ -3156,6 +3186,9 @@ char* freerdp_settings_get_string_writable(rdpSettings* settings, FreeRDP_Settin
 
 		case FreeRDP_DynamicDSTTimeZoneKeyName:
 			return settings->DynamicDSTTimeZoneKeyName;
+
+		case FreeRDP_EndpointFedAuthToken:
+			return settings->EndpointFedAuthToken;
 
 		case FreeRDP_GatewayAcceptedCert:
 			return settings->GatewayAcceptedCert;
@@ -3364,6 +3397,9 @@ char* freerdp_settings_get_string_writable(rdpSettings* settings, FreeRDP_Settin
 		case FreeRDP_SmartcardPrivateKey:
 			return settings->SmartcardPrivateKey;
 
+		case FreeRDP_SspiClientHostname:
+			return settings->SspiClientHostname;
+
 		case FreeRDP_SspiModule:
 			return settings->SspiModule;
 
@@ -3405,6 +3441,7 @@ char* freerdp_settings_get_string_writable(rdpSettings* settings, FreeRDP_Settin
 BOOL freerdp_settings_set_string_(WINPR_ATTR_UNUSED rdpSettings* settings,
                                   WINPR_ATTR_UNUSED FreeRDP_Settings_Keys_String id,
                                   const char* val, size_t len)
+
 {
 	union
 	{
@@ -3419,6 +3456,9 @@ BOOL freerdp_settings_set_string_(WINPR_ATTR_UNUSED rdpSettings* settings,
 
 	switch (id)
 	{
+		case FreeRDP_AadAuthHelper:
+			return update_string_(&settings->AadAuthHelper, cnv.c, len);
+
 		case FreeRDP_AadServerHostname:
 			return update_string_(&settings->AadServerHostname, cnv.c, len);
 
@@ -3482,6 +3522,9 @@ BOOL freerdp_settings_set_string_(WINPR_ATTR_UNUSED rdpSettings* settings,
 		case FreeRDP_ContainerName:
 			return update_string_(&settings->ContainerName, cnv.c, len);
 
+		case FreeRDP_CorrelationId:
+			return update_string_(&settings->CorrelationId, cnv.c, len);
+
 		case FreeRDP_CspName:
 			return update_string_(&settings->CspName, cnv.c, len);
 
@@ -3499,6 +3542,9 @@ BOOL freerdp_settings_set_string_(WINPR_ATTR_UNUSED rdpSettings* settings,
 
 		case FreeRDP_DynamicDSTTimeZoneKeyName:
 			return update_string_(&settings->DynamicDSTTimeZoneKeyName, cnv.c, len);
+
+		case FreeRDP_EndpointFedAuthToken:
+			return update_string_(&settings->EndpointFedAuthToken, cnv.c, len);
 
 		case FreeRDP_GatewayAcceptedCert:
 			return update_string_(&settings->GatewayAcceptedCert, cnv.c, len);
@@ -3707,6 +3753,9 @@ BOOL freerdp_settings_set_string_(WINPR_ATTR_UNUSED rdpSettings* settings,
 		case FreeRDP_SmartcardPrivateKey:
 			return update_string_(&settings->SmartcardPrivateKey, cnv.c, len);
 
+		case FreeRDP_SspiClientHostname:
+			return update_string_(&settings->SspiClientHostname, cnv.c, len);
+
 		case FreeRDP_SspiModule:
 			return update_string_(&settings->SspiModule, cnv.c, len);
 
@@ -3777,6 +3826,9 @@ BOOL freerdp_settings_set_string_copy_(WINPR_ATTR_UNUSED rdpSettings* settings,
 
 	switch (id)
 	{
+		case FreeRDP_AadAuthHelper:
+			return update_string_copy_(&settings->AadAuthHelper, cnv.cc, len, cleanup);
+
 		case FreeRDP_AadServerHostname:
 			return update_string_copy_(&settings->AadServerHostname, cnv.cc, len, cleanup);
 
@@ -3841,6 +3893,9 @@ BOOL freerdp_settings_set_string_copy_(WINPR_ATTR_UNUSED rdpSettings* settings,
 		case FreeRDP_ContainerName:
 			return update_string_copy_(&settings->ContainerName, cnv.cc, len, cleanup);
 
+		case FreeRDP_CorrelationId:
+			return update_string_copy_(&settings->CorrelationId, cnv.cc, len, cleanup);
+
 		case FreeRDP_CspName:
 			return update_string_copy_(&settings->CspName, cnv.cc, len, cleanup);
 
@@ -3858,6 +3913,9 @@ BOOL freerdp_settings_set_string_copy_(WINPR_ATTR_UNUSED rdpSettings* settings,
 
 		case FreeRDP_DynamicDSTTimeZoneKeyName:
 			return update_string_copy_(&settings->DynamicDSTTimeZoneKeyName, cnv.cc, len, cleanup);
+
+		case FreeRDP_EndpointFedAuthToken:
+			return update_string_copy_(&settings->EndpointFedAuthToken, cnv.cc, len, cleanup);
 
 		case FreeRDP_GatewayAcceptedCert:
 			return update_string_copy_(&settings->GatewayAcceptedCert, cnv.cc, len, cleanup);
@@ -4071,6 +4129,9 @@ BOOL freerdp_settings_set_string_copy_(WINPR_ATTR_UNUSED rdpSettings* settings,
 
 		case FreeRDP_SmartcardPrivateKey:
 			return update_string_copy_(&settings->SmartcardPrivateKey, cnv.cc, len, cleanup);
+
+		case FreeRDP_SspiClientHostname:
+			return update_string_copy_(&settings->SspiClientHostname, cnv.cc, len, cleanup);
 
 		case FreeRDP_SspiModule:
 			return update_string_copy_(&settings->SspiModule, cnv.cc, len, cleanup);

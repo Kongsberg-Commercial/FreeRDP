@@ -13,6 +13,8 @@ package com.freerdp.freerdpcore.presentation;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.preference.ListPreference;
 import androidx.preference.PreferenceManager;
 import android.widget.Toast;
 
@@ -112,6 +114,13 @@ public class ApplicationSettingsActivity
 		@Override public void onCreatePreferences(Bundle savedInstanceState, String rootKey)
 		{
 			setPreferencesFromResource(R.xml.settings_app_ui, rootKey);
+			ListPreference theme = findPreference(getString(R.string.pref_key_theme));
+			if (theme != null)
+				theme.setOnPreferenceChangeListener((p, v) -> {
+					AppCompatDelegate.setDefaultNightMode(nightModeFor((String)v));
+					requireActivity().recreate();
+					return true;
+				});
 		}
 	}
 
@@ -191,6 +200,20 @@ public class ApplicationSettingsActivity
 		}
 	}
 
+	public static class ExperimentalFragment extends PreferenceFragmentCompat
+	{
+		@Override public void onCreatePreferences(Bundle savedInstanceState, String rootKey)
+		{
+			setPreferencesFromResource(R.xml.settings_app_experimental, rootKey);
+		}
+	}
+
+	// Preference key convention: "experimental.<feature>".
+	public static boolean isExperimentalEnabled(Context context, String feature)
+	{
+		return get(context).getBoolean("experimental." + feature, false);
+	}
+
 	public static SharedPreferences get(Context context)
 	{
 		Context appContext = context.getApplicationContext();
@@ -198,6 +221,7 @@ public class ApplicationSettingsActivity
 		PreferenceManager.setDefaultValues(appContext, R.xml.settings_app_power, false);
 		PreferenceManager.setDefaultValues(appContext, R.xml.settings_app_security, false);
 		PreferenceManager.setDefaultValues(appContext, R.xml.settings_app_ui, false);
+		PreferenceManager.setDefaultValues(appContext, R.xml.settings_app_experimental, false);
 		SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(appContext);
 
 		final String key = context.getString(R.string.preference_key_client_name);
@@ -241,11 +265,11 @@ public class ApplicationSettingsActivity
 		    context.getString(R.string.preference_key_ui_hide_navigation_bar), false);
 	}
 
-	public static boolean getHideActionBar(Context context)
+	public static boolean getFitRoundedCorners(Context context)
 	{
 		SharedPreferences preferences = get(context);
-		return preferences.getBoolean(context.getString(R.string.preference_key_ui_hide_action_bar),
-		                              false);
+		return preferences.getBoolean(
+		    context.getString(R.string.preference_key_ui_fit_rounded_corners), false);
 	}
 
 	public static boolean getUseBackAsAltf4(Context context)
@@ -294,5 +318,24 @@ public class ApplicationSettingsActivity
 	{
 		SharedPreferences preferences = get(context);
 		return preferences.getString(context.getString(R.string.preference_key_client_name), "");
+	}
+
+	public static int getNightMode(Context context)
+	{
+		return nightModeFor(
+		    get(context).getString(context.getString(R.string.pref_key_theme), "auto"));
+	}
+
+	private static int nightModeFor(String value)
+	{
+		switch (value)
+		{
+			case "light":
+				return AppCompatDelegate.MODE_NIGHT_NO;
+			case "dark":
+				return AppCompatDelegate.MODE_NIGHT_YES;
+			default:
+				return AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM;
+		}
 	}
 }

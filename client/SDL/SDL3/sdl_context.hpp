@@ -20,7 +20,6 @@
 
 #include <map>
 #include <memory>
-#include <mutex>
 #include <sstream>
 #include <vector>
 #include <mutex>
@@ -38,6 +37,7 @@
 #include "sdl_disp.hpp"
 #include "sdl_clip.hpp"
 #include "sdl_input.hpp"
+#include "sdl_rail.hpp"
 
 #include "dialogs/sdl_connection_dialog_wrapper.hpp"
 
@@ -130,6 +130,7 @@ class SdlContext
 	[[nodiscard]] sdlDispContext& getDisplayChannelContext();
 	[[nodiscard]] sdlInput& getInputChannelContext();
 	[[nodiscard]] sdlClip& getClipboardChannelContext();
+	[[nodiscard]] SdlRail& getRailChannelContext();
 
 	[[nodiscard]] SdlConnectionDialogWrapper& getDialog();
 
@@ -155,6 +156,9 @@ class SdlContext
 	[[nodiscard]] std::vector<rdpPointer*>& pointers();
 	[[nodiscard]] bool contains(const rdpPointer* ptr) const;
 
+	[[nodiscard]] bool credentialsRead() const;
+	void setCredentialsRead();
+
   private:
 	[[nodiscard]] bool resizeToScale(SdlWindow* window);
 	[[nodiscard]] bool useLocalScale() const;
@@ -163,6 +167,8 @@ class SdlContext
 	[[nodiscard]] static BOOL postConnect(freerdp* instance);
 	static void postDisconnect(freerdp* instance);
 	static void postFinalDisconnect(freerdp* instance);
+	[[nodiscard]] static BOOL getAccessToken(freerdp* instance, AccessTokenType tokenType,
+	                                         char** token, size_t count, ...);
 	[[nodiscard]] static BOOL desktopResize(rdpContext* context);
 	[[nodiscard]] static BOOL playSound(rdpContext* context, const PLAY_SOUND_UPDATE* play_sound);
 	[[nodiscard]] static BOOL beginPaint(rdpContext* context);
@@ -230,6 +236,7 @@ class SdlContext
 	sdlDispContext _disp;
 	sdlInput _input;
 	sdlClip _clip;
+	SdlRail _rail;
 
 	SdlConnectionDialogWrapper _dialog;
 
@@ -238,9 +245,10 @@ class SdlContext
 	std::map<SDL_DisplayID, std::pair<SDL_Rect, SDL_Rect>> _offsets;
 
 	uint32_t _windowWidth = 0;
-	uint32_t _windowHeigth = 0;
+	uint32_t _windowHeight = 0;
 	WinPREvent _windowsCreatedEvent;
 	std::thread _thread;
 	std::vector<COMMAND_LINE_ARGUMENT_A> _args;
 	std::vector<rdpPointer*> _valid_pointers;
+	bool _credentialsRead = false;
 };

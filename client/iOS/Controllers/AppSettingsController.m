@@ -81,7 +81,7 @@
 	switch (section)
 	{
 		case SECTION_UI_SETTINGS: // UI settings
-			return 5;
+			return 4;
 		case SECTION_CERTIFICATE_HANDLING_SETTINGS: // certificate handling settings
 			return 2;
 		default:
@@ -124,7 +124,6 @@
 				case 1:
 				case 2:
 				case 3:
-				case 4:
 					cellIdentifier = TableCellIdentifierYesNo;
 					break;
 			}
@@ -178,8 +177,8 @@
 		case 0:
 		{
 			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
-			[[flagCell label] setText:NSLocalizedString(@"Hide Status Bar",
-			                                            "Show/Hide Phone Status Bar setting")];
+			[flagCell setTitle:NSLocalizedString(@"Hide Status Bar",
+			                                     "Show/Hide Phone Status Bar setting")];
 			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
 			[[flagCell toggle]
 			    setOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"ui.hide_status_bar"]];
@@ -191,8 +190,7 @@
 		case 1:
 		{
 			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
-			[[flagCell label]
-			    setText:NSLocalizedString(@"Hide Tool Bar", "Show/Hide Tool Bar setting")];
+			[flagCell setTitle:NSLocalizedString(@"Hide Tool Bar", "Show/Hide Tool Bar setting")];
 			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
 			[[flagCell toggle]
 			    setOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"ui.hide_tool_bar"]];
@@ -204,8 +202,8 @@
 		case 2:
 		{
 			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
-			[[flagCell label]
-			    setText:NSLocalizedString(@"Swap Mouse Buttons", "Swap Mouse Button UI setting")];
+			[flagCell
+			    setTitle:NSLocalizedString(@"Swap Mouse Buttons", "Swap Mouse Button UI setting")];
 			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
 			[[flagCell toggle]
 			    setOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"ui.swap_mouse_buttons"]];
@@ -217,24 +215,11 @@
 		case 3:
 		{
 			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
-			[[flagCell label]
-			    setText:NSLocalizedString(@"Invert Scrolling", "Invert Scrolling UI setting")];
+			[flagCell
+			    setTitle:NSLocalizedString(@"Invert Scrolling", "Invert Scrolling UI setting")];
 			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
 			[[flagCell toggle]
 			    setOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"ui.invert_scrolling"]];
-			[[flagCell toggle] addTarget:self
-			                      action:@selector(toggleSettingValue:)
-			            forControlEvents:UIControlEventValueChanged];
-			break;
-		}
-		case 4:
-		{
-			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
-			[[flagCell label] setText:NSLocalizedString(@"Touch Pointer Auto Scroll",
-			                                            "Touch Pointer Auto Scroll UI setting")];
-			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
-			[[flagCell toggle] setOn:[[NSUserDefaults standardUserDefaults]
-			                             boolForKey:@"ui.auto_scroll_touchpointer"]];
 			[[flagCell toggle] addTarget:self
 			                      action:@selector(toggleSettingValue:)
 			            forControlEvents:UIControlEventValueChanged];
@@ -254,8 +239,8 @@
 		case 0:
 		{
 			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
-			[[flagCell label] setText:NSLocalizedString(@"Accept all Certificates",
-			                                            "Accept All Certificates setting")];
+			[flagCell setTitle:NSLocalizedString(@"Accept all Certificates",
+			                                     "Accept All Certificates setting")];
 			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
 			[[flagCell toggle] setOn:[[NSUserDefaults standardUserDefaults]
 			                             boolForKey:@"security.accept_certificates"]];
@@ -267,8 +252,8 @@
 		case 1:
 		{
 			EditSubEditTableViewCell *subCell = (EditSubEditTableViewCell *)cell;
-			[[subCell label] setText:NSLocalizedString(@"Erase Certificate Cache",
-			                                           @"Erase certificate cache button")];
+			[subCell setTitle:NSLocalizedString(@"Erase Certificate Cache",
+			                                    @"Erase certificate cache button")];
 			break;
 		}
 		default:
@@ -338,12 +323,6 @@
 		case GET_TAG(SECTION_UI_SETTINGS, 3):
 			[[NSUserDefaults standardUserDefaults] setBool:[valueSwitch isOn]
 			                                        forKey:@"ui.invert_scrolling"];
-			SetInvertScrollingFlag([valueSwitch isOn]);
-			break;
-
-		case GET_TAG(SECTION_UI_SETTINGS, 4):
-			[[NSUserDefaults standardUserDefaults] setBool:[valueSwitch isOn]
-			                                        forKey:@"ui.auto_scroll_touchpointer"];
 			SetInvertScrollingFlag([valueSwitch isOn]);
 			break;
 

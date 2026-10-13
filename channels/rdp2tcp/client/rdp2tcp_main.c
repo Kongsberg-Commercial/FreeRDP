@@ -28,6 +28,8 @@
 #include <freerdp/svc.h>
 #include <freerdp/channels/rdp2tcp.h>
 
+#include <freerdp/utils/warnings.h>
+
 #include <freerdp/log.h>
 #define TAG CLIENT_TAG(RDP2TCP_DVC_CHANNEL_NAME)
 
@@ -43,6 +45,7 @@ typedef struct
 	CHANNEL_ENTRY_POINTS_FREERDP_EX channelEntryPoints;
 	char buffer[16 * 1024];
 	char* commandline;
+	UINT32 totalLength;
 } Plugin;
 
 static int init_external_addin(Plugin* plugin)
@@ -190,6 +193,7 @@ static void dataReceived(Plugin* plugin, void* pData, UINT32 dataLength, UINT32 
 
 	if (dataFlags & CHANNEL_FLAG_FIRST)
 	{
+		plugin->totalLength = totalLength;
 		if (!WriteFile(plugin->hStdInputWrite, &totalLength, sizeof(totalLength), &dwWritten,
 		               nullptr))
 			closeChannel(plugin);
@@ -298,6 +302,8 @@ FREERDP_ENTRY_POINT(BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS_E
 	WINPR_ASSERT(pEntryPointsEx);
 	WINPR_ASSERT(pEntryPointsEx->cbSize >= sizeof(CHANNEL_ENTRY_POINTS_FREERDP_EX) &&
 	             pEntryPointsEx->MagicNumber == FREERDP_CHANNEL_MAGIC_NUMBER);
+
+	freerdp_warn_unmaintained(WLog_Get(TAG), "CHANNEL_RDP2TCP_CLIENT");
 
 	Plugin* plugin = (Plugin*)calloc(1, sizeof(Plugin));
 

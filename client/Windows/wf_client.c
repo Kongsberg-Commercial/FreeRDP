@@ -52,8 +52,10 @@
 #include <freerdp/locale/locale.h>
 #include <freerdp/locale/keyboard.h>
 #include <freerdp/codec/region.h>
+#include <freerdp/client.h>
 #include <freerdp/client/cmdline.h>
 #include <freerdp/client/channels.h>
+#include <freerdp/client/aad_helper.h>
 #include <freerdp/channels/channels.h>
 #include <freerdp/utils/signal.h>
 
@@ -555,6 +557,12 @@ static BOOL wf_authenticate_ex(freerdp* instance, char** username, char** passwo
 	WINPR_ASSERT(username);
 	WINPR_ASSERT(domain);
 	WINPR_ASSERT(password);
+
+	/* /from-stdin: delegate to the common CLI handler instead of prompting via GUI.
+	 * Settings are fully parsed by the time auth callbacks fire, so this branch
+	 * reliably observes the user's choice. */
+	if (freerdp_settings_get_bool(instance->context->settings, FreeRDP_CredentialsFromStdin))
+		return client_cli_authenticate_ex(instance, username, password, domain, reason);
 
 	const WCHAR auth[] = L"Target credentials requested";
 	const WCHAR authPin[] = L"PIN requested";
@@ -1288,6 +1296,7 @@ void wf_size_scrollbars(wfContext* wfc, UINT32 client_width, UINT32 client_heigh
 		SCROLLINFO si;
 		BOOL horiz = wfc->xScrollVisible;
 		BOOL vert = wfc->yScrollVisible;
+		BOOL redraw = FALSE;
 
 		if (!horiz && client_width < freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth))
 		{
@@ -1354,6 +1363,14 @@ void wf_size_scrollbars(wfContext* wfc, UINT32 client_width, UINT32 client_heigh
 			si.nPos = wfc->xCurrentScroll;
 			SetScrollInfo(wfc->hwnd, SB_HORZ, &si, TRUE);
 		}
+		else
+		{
+			if (wfc->xCurrentScroll != 0)
+			{
+				wfc->xCurrentScroll = 0;
+				redraw = TRUE;
+			}
+		}
 
 		if (vert)
 		{
@@ -1370,6 +1387,20 @@ void wf_size_scrollbars(wfContext* wfc, UINT32 client_width, UINT32 client_heigh
 			si.nPage = client_height;
 			si.nPos = wfc->yCurrentScroll;
 			SetScrollInfo(wfc->hwnd, SB_VERT, &si, TRUE);
+		}
+		else
+		{
+			if (wfc->yCurrentScroll != 0)
+			{
+				wfc->yCurrentScroll = 0;
+				redraw = TRUE;
+			}
+		}
+
+		if (redraw)
+		{
+			InvalidateRect(wfc->hwnd, nullptr, FALSE);
+			UpdateWindow(wfc->hwnd);
 		}
 	}
 
@@ -1425,6 +1456,7 @@ static BOOL wfreerdp_client_new(freerdp* instance, rdpContext* context)
 	instance->PostConnect = wf_post_connect;
 	instance->PostDisconnect = wf_post_disconnect;
 	instance->AuthenticateEx = wf_authenticate_ex;
+	instance->GetAccessToken = client_failsafe_get_access_token;
 
 #ifdef WITH_WINDOWS_CERT_STORE
 	if (!freerdp_settings_set_bool(context->settings, FreeRDP_CertificateCallbackPreferPEM, TRUE))

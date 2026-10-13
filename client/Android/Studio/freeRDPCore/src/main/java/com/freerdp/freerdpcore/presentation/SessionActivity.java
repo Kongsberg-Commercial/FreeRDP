@@ -2,6 +2,7 @@
    Android Session Activity
 
    Copyright 2013 Thincast Technologies GmbH, Author: Martin Fleisz
+   Copyright 2026 Ibrahim Sevinc <ibrahim.sevinc.mail@gmail.com>
 
    This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
    If a copy of the MPL was not distributed with this file, You can obtain one at
@@ -10,18 +11,15 @@
 
 package com.freerdp.freerdpcore.presentation;
 
-import android.app.AlertDialog;
-import android.app.UiModeManager;
+import android.Manifest;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Bitmap.Config;
 import android.graphics.Rect;
 import android.graphics.drawable.BitmapDrawable;
-import android.inputmethodservice.KeyboardView;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -31,7 +29,10 @@ import android.os.Message;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -39,13 +40,13 @@ import androidx.lifecycle.ViewModelProvider;
 
 import android.util.Log;
 import android.view.KeyEvent;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
-import android.view.ViewConfiguration;
+import android.view.ViewGroup;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
+import android.view.RoundedCorner;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.Toast;
 
@@ -57,15 +58,13 @@ import com.freerdp.freerdpcore.domain.ConnectionReference;
 import com.freerdp.freerdpcore.services.LibFreeRDP;
 import com.freerdp.freerdpcore.utils.ClipboardManagerProxy;
 
-import java.util.Collection;
-import java.util.Iterator;
-
 public class SessionActivity extends AppCompatActivity
     implements LibFreeRDP.UIEventListener, ClipboardManagerProxy.OnClipboardChangedListener
 {
 	public static final String PARAM_CONNECTION_REFERENCE = "conRef";
 	public static final String PARAM_INSTANCE = "instance";
 	private static final String TAG = "FreeRDP.SessionActivity";
+	static volatile SessionActivity activeSession;
 	private Bitmap bitmap;
 	private SessionState session;
 	private SessionView sessionView;
@@ -74,6 +73,10 @@ public class SessionActivity extends AppCompatActivity
 	private static final int REFRESH_SESSIONVIEW = 1;
 	private static final int DISPLAY_TOAST = 2;
 	private static final int GRAPHICS_CHANGED = 6;
+	private static final int POINTER_SET = 7;
+	private static final int REQUEST_MEDIA_PERMISSIONS = 100;
+
+	private RailWindowManager railManager;
 
 	private final Handler uiHandler = new Handler(Looper.getMainLooper()) {
 		@Override public void handleMessage(Message msg)
@@ -98,6 +101,28 @@ public class SessionActivity extends AppCompatActivity
 					errorToast.show();
 					break;
 				}
+				case POINTER_SET:
+				{
+					Bundle data = msg.getData();
+					if (data != null && data.containsKey("pixels"))
+					{
+						int[] pixels = data.getIntArray("pixels");
+						int width = data.getInt("width");
+						int height = data.getInt("height");
+						int hotX = data.getInt("hotX");
+						int hotY = data.getInt("hotY");
+						sessionView.setRemoteCursor(pixels, width, height, hotX, hotY);
+						if (touchPointerView != null)
+							touchPointerView.setRemoteCursor(pixels, width, height, hotX, hotY);
+					}
+					else
+					{
+						sessionView.setRemoteCursor(null, 0, 0, 0, 0);
+						if (touchPointerView != null)
+							touchPointerView.setRemoteCursor(null, 0, 0, 0, 0);
+					}
+					break;
+				}
 			}
 		}
 	};
@@ -105,6 +130,7 @@ public class SessionActivity extends AppCompatActivity
 	private int screen_width;
 	private int screen_height;
 
+	private BookmarkBase pendingConnectBookmark = null;
 	private boolean connectCancelledByUser = false;
 	private boolean sessionRunning = false;
 	private long backPressedTime = 0;
@@ -115,55 +141,85 @@ public class SessionActivity extends AppCompatActivity
 	private SessionInputManager inputManager;
 	private SessionDialogs dialogs;
 
-	private void hideSystemBars()
+	private FloatingToolbar floatingToolbar;
+
+	void hideSystemBars()
 	{
 		boolean hideStatusBar = ApplicationSettingsActivity.getHideStatusBar(this);
 		boolean hideNavBar = ApplicationSettingsActivity.getHideNavigationBar(this);
-		boolean hideActionBar = ApplicationSettingsActivity.getHideActionBar(this);
 
-		// Action bar is independent of status bar and API level.
-		if (getSupportActionBar() != null)
+		if (inputManager != null && inputManager.isSoftInputActive())
 		{
-			if (hideActionBar)
-				getSupportActionBar().hide();
-			else
-				getSupportActionBar().show();
+			// out of immersive mode while the IME is up, so the back gesture works right away
+			hideNavBar = false;
 		}
+
+		WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+
+		if (getSupportActionBar() != null)
+			getSupportActionBar().hide();
+
+		WindowInsetsControllerCompat controller =
+		    WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+		controller.setAppearanceLightStatusBars(false);
+		controller.setAppearanceLightNavigationBars(false);
+
+		getWindow().setStatusBarColor(android.graphics.Color.TRANSPARENT);
+		getWindow().setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+		getWindow().setNavigationBarContrastEnforced(false);
 
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
 		{
-			WindowInsetsControllerCompat controller =
-			    WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
 			int toHide = 0;
+			int toShow = 0;
 			if (hideStatusBar)
 				toHide |= WindowInsetsCompat.Type.statusBars();
+			else
+				toShow |= WindowInsetsCompat.Type.statusBars();
+
 			if (hideNavBar)
 				toHide |= WindowInsetsCompat.Type.navigationBars();
+			else
+				toShow |= WindowInsetsCompat.Type.navigationBars();
 
 			if (toHide != 0)
 			{
-				controller.hide(toHide);
+				// whatever stays hidden keeps immersive behaviour; BEHAVIOR_DEFAULT would let any
+				// tap on the session pull the bar back in
 				controller.setSystemBarsBehavior(
 				    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+				controller.hide(toHide);
 			}
-			else
+
+			if (toShow != 0)
 			{
-				controller.show(WindowInsetsCompat.Type.systemBars());
+				controller.show(toShow);
 			}
 		}
 		else
 		{
-			// API < 30: use deprecated setSystemUiVisibility.
-			int flags = 0;
+			// API 29: layout flags must be set explicitly to keep drawing behind system bars.
+			int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+			            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
 			if (hideStatusBar)
 				flags |= View.SYSTEM_UI_FLAG_FULLSCREEN;
 			if (hideNavBar)
 				flags |= View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
-			if (flags != 0)
+			if ((flags & (View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)) !=
+			    0)
 				flags |= View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
 
 			getWindow().getDecorView().setSystemUiVisibility(flags);
 		}
+
+		WindowManager.LayoutParams lp = getWindow().getAttributes();
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+			lp.layoutInDisplayCutoutMode =
+			    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+		else
+			lp.layoutInDisplayCutoutMode =
+			    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+		getWindow().setAttributes(lp);
 	}
 
 	@Override public void onCreate(Bundle savedInstanceState)
@@ -184,12 +240,17 @@ public class SessionActivity extends AppCompatActivity
 		// A bit weird looking
 		// but this is the only way ...
 		final View activityRootView = findViewById(R.id.session_root_view);
+		activityRootView.setFitsSystemWindows(false);
+		ViewCompat.setOnApplyWindowInsetsListener(activityRootView,
+		                                          (v, insets) -> onWindowInsetsChanged(v, insets));
 		activityRootView.getViewTreeObserver().addOnGlobalLayoutListener(
 		    new OnGlobalLayoutListener() {
 			    @Override public void onGlobalLayout()
 			    {
-				    screen_width = activityRootView.getWidth();
-				    screen_height = activityRootView.getHeight();
+				    screen_width = scrollView.getWidth() - scrollView.getPaddingLeft() -
+				                   scrollView.getPaddingRight();
+				    screen_height = scrollView.getHeight() - scrollView.getPaddingTop() -
+				                    scrollView.getPaddingBottom();
 
 				    // start session
 				    if (!sessionRunning && getIntent() != null)
@@ -205,10 +266,24 @@ public class SessionActivity extends AppCompatActivity
 
 		touchPointerView = findViewById(R.id.touchPointerView);
 
-		KeyboardView keyboardView = findViewById(R.id.extended_keyboard);
-		KeyboardView modifiersKeyboardView = findViewById(R.id.extended_keyboard_header);
+		floatingToolbar = new FloatingToolbar(this, new FloatingToolbar.Listener() {
+			@Override public void onToggleTouchPointer()
+			{
+				if (inputManager != null)
+					inputManager.toggleTouchPointer();
+			}
+			@Override public void onToggleKeyboard()
+			{
+				if (inputManager != null)
+					inputManager.toggleKeyboard();
+			}
+		});
+
+		ExtendedKeyboardView keyboard = findViewById(R.id.extended_keyboard);
 
 		scrollView = findViewById(R.id.sessionScrollView);
+		scrollView.setScrollViewListener(null);
+		railManager = new RailWindowManager(this, findViewById(R.id.railContainer), sessionView);
 		sessionViewModel = new ViewModelProvider(this).get(SessionViewModel.class);
 		sessionViewModel.getState().observe(this, this::onConnectionStateChanged);
 
@@ -220,8 +295,8 @@ public class SessionActivity extends AppCompatActivity
 		});
 
 		// Wire up the input manager (instance is attached later in bindSession()).
-		inputManager = new SessionInputManager(this, scrollView, sessionView, touchPointerView,
-		                                       keyboardView, modifiersKeyboardView);
+		inputManager =
+		    new SessionInputManager(this, scrollView, sessionView, touchPointerView, keyboard);
 		sessionView.setSessionViewListener(inputManager);
 		touchPointerView.setTouchPointerListener(inputManager);
 		sessionView.setScaleGestureDetector(
@@ -244,8 +319,10 @@ public class SessionActivity extends AppCompatActivity
 	{
 		super.onWindowFocusChanged(hasFocus);
 		if (hasFocus)
+		{
 			hideSystemBars();
-		mClipboardManager.getPrimaryClipManually();
+			mClipboardManager.getPrimaryClipManually();
+		}
 	}
 
 	@Override protected void onStart()
@@ -264,13 +341,15 @@ public class SessionActivity extends AppCompatActivity
 	{
 		super.onResume();
 		Log.v(TAG, "Session.onResume");
+		activeSession = this;
 	}
 
 	@Override protected void onPause()
 	{
 		super.onPause();
 		Log.v(TAG, "Session.onPause");
-
+		if (activeSession == this)
+			activeSession = null;
 		// hide any visible keyboards
 		inputManager.hideKeyboards();
 	}
@@ -293,9 +372,8 @@ public class SessionActivity extends AppCompatActivity
 		// Cancel running disconnect timers.
 		GlobalApp.cancelDisconnectTimer();
 
-		// Disconnect all remaining sessions.
-		Collection<SessionState> sessions = GlobalApp.getSessions();
-		for (SessionState session : sessions)
+		// Disconnect only this activity's session.
+		if (session != null)
 			LibFreeRDP.disconnect(session.getInstance());
 
 		// unregister freerdp session listener
@@ -314,10 +392,109 @@ public class SessionActivity extends AppCompatActivity
 	{
 		super.onConfigurationChanged(newConfig);
 
-		// reload keyboard resources (changed from landscape)
-		inputManager.reloadKeyboards();
-
 		hideSystemBars();
+
+		// screen_width/screen_height will be updated by the next onGlobalLayout callback;
+		if (session != null && session.getBookmark() != null &&
+		    session.getBookmark().getActiveScreenSettings().isFitScreen())
+		{
+			scrollView.post(() -> {
+				if (screen_width > 0 && screen_height > 0)
+					LibFreeRDP.sendMonitorLayout(session.getInstance(), screen_width,
+					                             screen_height);
+			});
+		}
+	}
+
+	private WindowInsetsCompat onWindowInsetsChanged(View rootView, WindowInsetsCompat windowInsets)
+	{
+		boolean fitSafeArea = ApplicationSettingsActivity.getFitRoundedCorners(this);
+		boolean hideStatusBar = ApplicationSettingsActivity.getHideStatusBar(this);
+		boolean hideNavBar = ApplicationSettingsActivity.getHideNavigationBar(this);
+
+		int insetsTop = windowInsets
+		                    .getInsets(WindowInsetsCompat.Type.statusBars() |
+		                               WindowInsetsCompat.Type.displayCutout())
+		                    .top;
+		rootView.setPadding(0, hideStatusBar ? 0 : insetsTop, 0, 0);
+		Insets navInsets = hideNavBar
+		                       ? Insets.NONE
+		                       : windowInsets.getInsets(WindowInsetsCompat.Type.navigationBars());
+		if (floatingToolbar != null)
+			floatingToolbar.setInsets(navInsets.left, hideStatusBar ? 0 : insetsTop,
+			                          navInsets.right, navInsets.bottom);
+
+		int safeLeft = 0, safeTop = 0, safeRight = 0, safeBottom = 0;
+		if (fitSafeArea && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+		{
+			WindowInsets platformInsets = windowInsets.toWindowInsets();
+			if (platformInsets != null)
+			{
+				boolean landscape = getResources().getConfiguration().orientation ==
+				                    Configuration.ORIENTATION_LANDSCAPE;
+
+				int radTL = cornerRadius(platformInsets, RoundedCorner.POSITION_TOP_LEFT);
+				int radBL = cornerRadius(platformInsets, RoundedCorner.POSITION_BOTTOM_LEFT);
+				int radTR = cornerRadius(platformInsets, RoundedCorner.POSITION_TOP_RIGHT);
+				int radBR = cornerRadius(platformInsets, RoundedCorner.POSITION_BOTTOM_RIGHT);
+
+				if (landscape)
+				{
+					safeLeft = Math.max(0, Math.max(radTL, radBL) - rootView.getPaddingLeft());
+					safeRight = Math.max(0, Math.max(radTR, radBR) - rootView.getPaddingRight());
+				}
+				else
+				{
+					safeTop = Math.max(0, Math.max(radTL, radTR) - rootView.getPaddingTop());
+					safeBottom = Math.max(0, Math.max(radBL, radBR) - rootView.getPaddingBottom());
+				}
+			}
+		}
+
+		int imeBottom = windowInsets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+
+		// the only reliable account of whether the IME is really on screen: it lets the input
+		// manager tell an external dismissal from a show request that has not animated in yet
+		if (inputManager != null)
+			inputManager.onImeVisibilityChanged(imeBottom > 0);
+
+		View extKeyboard = findViewById(R.id.extended_keyboard);
+		if (extKeyboard instanceof ExtendedKeyboardView)
+		{
+			// imeBottom already covers the nav bar, so don't pad for it twice
+			int kbdBottom = imeBottom > 0 ? 0 : navInsets.bottom;
+			((ExtendedKeyboardView)extKeyboard)
+			    .setInsets(Math.max(navInsets.left, safeLeft), Math.max(navInsets.right, safeRight),
+			               kbdBottom);
+		}
+
+		// the keyboard reserves the bottom inset through its own margin, so the scroll view
+		// above it must not pad for the nav bar again
+		boolean kbdVisible = extKeyboard != null && extKeyboard.getVisibility() == View.VISIBLE;
+		int scrollBottom = kbdVisible ? 0 : Math.max(safeBottom, navInsets.bottom);
+		scrollView.setPadding(Math.max(safeLeft, navInsets.left), safeTop,
+		                      Math.max(safeRight, navInsets.right), scrollBottom);
+
+		// insets are consumed here, so lift the extended keyboard above the IME
+		if (extKeyboard != null)
+		{
+			ViewGroup.MarginLayoutParams lp =
+			    (ViewGroup.MarginLayoutParams)extKeyboard.getLayoutParams();
+			if (lp.bottomMargin != imeBottom)
+			{
+				lp.bottomMargin = imeBottom;
+				extKeyboard.setLayoutParams(lp);
+			}
+		}
+
+		return WindowInsetsCompat.CONSUMED;
+	}
+
+	@RequiresApi(Build.VERSION_CODES.S)
+	private static int cornerRadius(WindowInsets insets, int position)
+	{
+		RoundedCorner corner = insets.getRoundedCorner(position);
+		return (corner != null) ? corner.getRadius() : 0;
 	}
 
 	private void processIntent(Intent intent)
@@ -378,22 +555,10 @@ public class SessionActivity extends AppCompatActivity
 		Log.v(TAG, "Screen Resolution: " + screenSettings.getResolutionString());
 		if (screenSettings.isAutomatic())
 		{
-			if ((getResources().getConfiguration().screenLayout &
-			     Configuration.SCREENLAYOUT_SIZE_MASK) >= Configuration.SCREENLAYOUT_SIZE_LARGE)
-			{
-				// large screen device i.e. tablet: simply use screen info
-				screenSettings.setHeight(screen_height);
-				screenSettings.setWidth(screen_width);
-			}
-			else
-			{
-				// small screen device i.e. phone:
-				// Automatic uses the largest side length of the screen and
-				// makes a 16:10 resolution setting out of it
-				int screenMax = Math.max(screen_width, screen_height);
-				screenSettings.setHeight(screenMax);
-				screenSettings.setWidth((int)((float)screenMax * 1.6f));
-			}
+			// Instead of enforcing obsolete ratios based on screen categories,
+			// directly map to actual device metrics without arbitrary multi-scaling.
+			screenSettings.setHeight(screen_height);
+			screenSettings.setWidth(screen_width);
 		}
 		if (screenSettings.isFitScreen())
 		{
@@ -401,7 +566,37 @@ public class SessionActivity extends AppCompatActivity
 			screenSettings.setWidth(screen_width);
 		}
 
+		// RECORD_AUDIO / CAMERA: only if the matching redirect is enabled.
+		java.util.ArrayList<String> needed = new java.util.ArrayList<>();
+		if (bookmark.getAdvancedSettings().getRedirectMicrophone() &&
+		    checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+		        PackageManager.PERMISSION_GRANTED)
+			needed.add(Manifest.permission.RECORD_AUDIO);
+		if (bookmark.getAdvancedSettings().getRedirectCamera() &&
+		    checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)
+			needed.add(Manifest.permission.CAMERA);
+
+		if (!needed.isEmpty())
+		{
+			pendingConnectBookmark = bookmark;
+			requestPermissions(needed.toArray(new String[0]), REQUEST_MEDIA_PERMISSIONS);
+			return;
+		}
+
 		connectWithTitle(bookmark.getLabel());
+	}
+
+	@Override
+	public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+	                                       @NonNull int[] grantResults)
+	{
+		super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+		if (requestCode == REQUEST_MEDIA_PERMISSIONS && pendingConnectBookmark != null)
+		{
+			BookmarkBase bookmark = pendingConnectBookmark;
+			pendingConnectBookmark = null;
+			connectWithTitle(bookmark.getLabel());
+		}
 	}
 
 	private void connect(Uri openUri)
@@ -458,6 +653,9 @@ public class SessionActivity extends AppCompatActivity
 		inputManager.attachSession(session.getInstance(), surface);
 		inputManager.setScreenSize(screen_width, screen_height);
 		hideSystemBars();
+		View rootView = findViewById(R.id.session_root_view);
+		if (rootView != null)
+			ViewCompat.requestApplyInsets(rootView);
 	}
 
 	private void closeSessionActivity(int resultCode)
@@ -467,53 +665,19 @@ public class SessionActivity extends AppCompatActivity
 		finish();
 	}
 
-	@Override public boolean onCreateOptionsMenu(Menu menu)
-	{
-		getMenuInflater().inflate(R.menu.session_menu, menu);
-		return true;
-	}
-
-	@Override public boolean onOptionsItemSelected(MenuItem item)
-	{
-		// refer to http://tools.android.com/tips/non-constant-fields why we
-		// can't use switch/case here ..
-		int itemId = item.getItemId();
-
-		if (itemId == R.id.session_touch_pointer)
-		{
-			inputManager.toggleTouchPointer();
-		}
-		else if (itemId == R.id.session_sys_keyboard)
-		{
-			inputManager.toggleSystemKeyboard();
-		}
-		else if (itemId == R.id.session_ext_keyboard)
-		{
-			inputManager.toggleExtendedKeyboard();
-		}
-		else if (itemId == R.id.session_disconnect)
-		{
-			inputManager.hideKeyboards();
-			LibFreeRDP.disconnect(session.getInstance());
-		}
-
-		return true;
-	}
-
 	public void handleBackPressed()
 	{
 		// hide keyboards (if any visible) or send alt+f4 to the session
-		if (inputManager.isAnyKeyboardVisible())
+		if (inputManager != null)
 		{
-			inputManager.hideKeyboards();
-			return;
-		}
-		if (inputManager.handleBackAsAltF4())
-		{
-			return;
+			if (inputManager.handleKeyboardBack())
+				return;
+			if (inputManager.handleBackAsAltF4())
+				return;
 		}
 		if (System.currentTimeMillis() - backPressedTime < 2000)
 		{
+			connectCancelledByUser = true;
 			LibFreeRDP.disconnect(session.getInstance());
 		}
 		else
@@ -528,6 +692,11 @@ public class SessionActivity extends AppCompatActivity
 		if (inputManager.onAndroidKeyLongPress(keyCode))
 			return true;
 		return super.onKeyLongPress(keyCode, event);
+	}
+
+	boolean handleKeyEvent(KeyEvent event)
+	{
+		return inputManager != null && inputManager.onAndroidKeyEvent(event);
 	}
 
 	// android keyboard input handling
@@ -659,10 +828,94 @@ public class SessionActivity extends AppCompatActivity
 		return dialogs.verifyChangedCertificate(host, port, subject, issuer, fingerprint, flags);
 	}
 
+	@Override public boolean OnExperimentalFeature(int feature)
+	{
+		final String featureKey;
+		final String displayName;
+		switch (feature)
+		{
+			case LibFreeRDP.EXPERIMENTAL_REMOTEAPP:
+				featureKey = "remoteapp";
+				displayName = getString(R.string.experimental_feature_remoteapp);
+				break;
+			case LibFreeRDP.EXPERIMENTAL_CAMERA:
+				featureKey = "camera";
+				displayName = getString(R.string.experimental_feature_camera);
+				break;
+			default:
+				return true;
+		}
+		if (ApplicationSettingsActivity.isExperimentalEnabled(this, featureKey))
+			return true;
+		// suppress the generic failure toast; the dialog explains the abort
+		connectCancelledByUser = true;
+		dialogs.showExperimentalBlocked(displayName);
+		return false;
+	}
+
 	@Override public void OnRemoteClipboardChanged(String data)
 	{
 		Log.v(TAG, "OnRemoteClipboardChanged: " + data);
 		mClipboardManager.setClipboardData(data);
+	}
+
+	@Override public void OnRemoteClipboardImageChanged(byte[] data)
+	{
+		Log.v(TAG, "OnRemoteClipboardImageChanged: " + data.length + " bytes");
+		mClipboardManager.setClipboardImage(data);
+	}
+
+	@Override public void OnPointerSet(int[] pixels, int width, int height, int hotX, int hotY)
+	{
+		Bundle data = new Bundle();
+		data.putIntArray("pixels", pixels);
+		data.putInt("width", width);
+		data.putInt("height", height);
+		data.putInt("hotX", hotX);
+		data.putInt("hotY", hotY);
+		Message msg = uiHandler.obtainMessage(POINTER_SET);
+		msg.setData(data);
+		uiHandler.sendMessage(msg);
+	}
+
+	@Override public void OnPointerSetNull()
+	{
+		uiHandler.sendEmptyMessage(POINTER_SET);
+	}
+
+	@Override public void OnPointerSetDefault()
+	{
+		sessionView.setDefaultCursor();
+	}
+
+	@Override public void OnRailWindowUpdate(long windowId, int width, int height, int[] pixels)
+	{
+		railManager.onWindowUpdate(windowId, width, height, pixels);
+	}
+
+	@Override public void OnRailWindowMove(long windowId, int x, int y, int w, int h)
+	{
+		railManager.onWindowMove(windowId, x, y, w, h);
+	}
+
+	@Override public void OnRailWindowHide(long windowId)
+	{
+		railManager.onWindowHide(windowId);
+	}
+
+	@Override public void OnRailWindowDestroy(long windowId)
+	{
+		railManager.onWindowDestroy(windowId);
+	}
+
+	@Override public void OnRailSessionEnd()
+	{
+		railManager.onSessionEnd();
+	}
+
+	@Override public void OnRailMonitoredDesktop(long[] windowIds, long activeWindowId)
+	{
+		railManager.onMonitoredDesktop(windowIds, activeWindowId);
 	}
 
 	// ****************************************************************************
@@ -680,7 +933,14 @@ public class SessionActivity extends AppCompatActivity
 	@Override public void onClipboardChanged(String data)
 	{
 		Log.v(TAG, "onClipboardChanged: " + data);
-		LibFreeRDP.sendClipboardData(session.getInstance(), data);
+		if (session != null)
+			LibFreeRDP.sendClipboardData(session.getInstance(), data);
+	}
+
+	@Override public void onClipboardImageChanged(byte[] data, String mimeType)
+	{
+		if (session != null && data != null)
+			LibFreeRDP.sendClipboardImageData(session.getInstance(), data, mimeType);
 	}
 
 	private void onConnectionStateChanged(SessionViewModel.ConnectionState state)
@@ -775,6 +1035,8 @@ public class SessionActivity extends AppCompatActivity
 		}
 
 		dialogs.dismissProgress();
+
+		railManager.clear();
 
 		session.setUIEventListener(null);
 		closeSessionActivity(RESULT_OK);

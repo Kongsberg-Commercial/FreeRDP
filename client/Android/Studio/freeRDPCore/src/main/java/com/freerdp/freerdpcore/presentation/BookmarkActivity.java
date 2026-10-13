@@ -259,7 +259,7 @@ public class BookmarkActivity
 			getPreferenceManager().setSharedPreferencesName(PREFS_NAME);
 			getPreferenceManager().setSharedPreferencesMode(MODE_PRIVATE);
 			setPreferencesFromResource(R.xml.screen_settings, rootKey);
-			applyInitialResolutionState();
+			applyInitialScreenState();
 			setIntSummaryProvider();
 		}
 
@@ -276,14 +276,28 @@ public class BookmarkActivity
 					return true;
 				});
 			}
+			Preference scale = findPreference("bookmark.scale_mode");
+			if (scale != null)
+			{
+				scale.setOnPreferenceChangeListener((pref, newValue) -> {
+					boolean custom = "custom".equalsIgnoreCase((String)newValue);
+					setEnabled("bookmark.scale_desktop", custom);
+					setEnabled("bookmark.scale_device", custom);
+					return true;
+				});
+			}
 		}
 
-		private void applyInitialResolutionState()
+		private void applyInitialScreenState()
 		{
 			SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
 			boolean custom = "custom".equalsIgnoreCase(prefs.getString("bookmark.resolution", ""));
 			setEnabled("bookmark.width", custom);
 			setEnabled("bookmark.height", custom);
+
+			custom = "custom".equalsIgnoreCase(prefs.getString("bookmark.scale_mode", ""));
+			setEnabled("bookmark.scale_desktop", custom);
+			setEnabled("bookmark.scale_device", custom);
 		}
 
 		private void setEnabled(String key, boolean enabled)
@@ -308,6 +322,15 @@ public class BookmarkActivity
 					if ("fitscreen".equals(res))
 						return getString(R.string.resolution_fit);
 					return res;
+				});
+			}
+
+			Preference scaleDesktopPref = findPreference("bookmark.scale_desktop");
+			if (scaleDesktopPref != null)
+			{
+				scaleDesktopPref.setSummaryProvider(preference -> {
+					SharedPreferences sp = getPreferenceManager().getSharedPreferences();
+					return sp.getInt("bookmark.scale_desktop", 100) + "%";
 				});
 			}
 		}
@@ -341,14 +364,16 @@ public class BookmarkActivity
 			getPreferenceManager().setSharedPreferencesMode(MODE_PRIVATE);
 			setPreferencesFromResource(R.xml.advanced_settings, rootKey);
 
+			if (!LibFreeRDP.hasCameraRedirectionSupport())
+				setEnabled("bookmark.redirect_camera", false);
+
 			SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
 
 			// Apply initial enabled states based on saved checkbox values.
 			setEnabled("bookmark.gateway_settings",
 			           prefs.getBoolean("bookmark.enable_gateway_settings", false));
-			boolean has3g = prefs.getBoolean("bookmark.enable_3g_settings", false);
-			setEnabled("bookmark.screen_3g", has3g);
-			setEnabled("bookmark.performance_3g", has3g);
+			setEnabled("bookmark.vmconnect_guid",
+			           prefs.getBoolean("bookmark.vmconnect_mode", false));
 
 			// Hide gateway section for non-manual bookmarks.
 			BookmarkViewModel vm =
@@ -359,23 +384,6 @@ public class BookmarkActivity
 				PreferenceScreen screen = getPreferenceScreen();
 				removeIfPresent(screen, "bookmark.enable_gateway_settings");
 				removeIfPresent(screen, "bookmark.gateway_settings");
-			}
-
-			Preference screenPref = findPreference("bookmark.screen_3g");
-			if (screenPref != null)
-			{
-				screenPref.setSummaryProvider(preference -> {
-					SharedPreferences sp = getPreferenceManager().getSharedPreferences();
-					String res = sp.getString("bookmark.resolution_3g", "800x600");
-					if ("automatic".equals(res))
-						res = getString(R.string.resolution_automatic);
-					else if ("custom".equals(res))
-						res = getString(R.string.resolution_custom);
-					else if ("fitscreen".equals(res))
-						res = getString(R.string.resolution_fit);
-					int colors = sp.getInt("bookmark.colors_3g", 16);
-					return res + "@" + colors;
-				});
 			}
 		}
 
@@ -392,13 +400,11 @@ public class BookmarkActivity
 				});
 			}
 
-			Preference g3Check = findPreference("bookmark.enable_3g_settings");
-			if (g3Check != null)
+			Preference vmCheck = findPreference("bookmark.vmconnect_mode");
+			if (vmCheck != null)
 			{
-				g3Check.setOnPreferenceChangeListener((pref, newValue) -> {
-					boolean enabled = (Boolean)newValue;
-					setEnabled("bookmark.screen_3g", enabled);
-					setEnabled("bookmark.performance_3g", enabled);
+				vmCheck.setOnPreferenceChangeListener((pref, newValue) -> {
+					setEnabled("bookmark.vmconnect_guid", (Boolean)newValue);
 					return true;
 				});
 			}
@@ -416,88 +422,6 @@ public class BookmarkActivity
 			Preference p = findPreference(key);
 			if (p != null)
 				screen.removePreference(p);
-		}
-	}
-
-	// -------------------------------------------------------------------------
-
-	public static class ScreenFragment3g extends PreferenceFragmentCompat
-	{
-		@Override public void onCreatePreferences(Bundle savedInstanceState, String rootKey)
-		{
-			getPreferenceManager().setSharedPreferencesName(PREFS_NAME);
-			getPreferenceManager().setSharedPreferencesMode(MODE_PRIVATE);
-			setPreferencesFromResource(R.xml.screen_settings_3g, rootKey);
-			applyInitialResolutionState();
-			setIntSummaryProvider();
-		}
-
-		@Override public void onStart()
-		{
-			super.onStart();
-			Preference res = findPreference("bookmark.resolution_3g");
-			if (res != null)
-			{
-				res.setOnPreferenceChangeListener((pref, newValue) -> {
-					boolean custom = "custom".equalsIgnoreCase((String)newValue);
-					setEnabled("bookmark.width_3g", custom);
-					setEnabled("bookmark.height_3g", custom);
-					return true;
-				});
-			}
-		}
-
-		private void applyInitialResolutionState()
-		{
-			SharedPreferences prefs = getPreferenceManager().getSharedPreferences();
-			boolean custom =
-			    "custom".equalsIgnoreCase(prefs.getString("bookmark.resolution_3g", ""));
-			setEnabled("bookmark.width_3g", custom);
-			setEnabled("bookmark.height_3g", custom);
-		}
-
-		private void setEnabled(String key, boolean enabled)
-		{
-			Preference p = findPreference(key);
-			if (p != null)
-				p.setEnabled(enabled);
-		}
-
-		private void setIntSummaryProvider()
-		{
-			Preference resPref = findPreference("bookmark.resolution_3g");
-			if (resPref != null)
-			{
-				resPref.setSummaryProvider(preference -> {
-					SharedPreferences sp = getPreferenceManager().getSharedPreferences();
-					String res = sp.getString("bookmark.resolution_3g", "800x600");
-					if ("automatic".equals(res))
-						return getString(R.string.resolution_automatic);
-					if ("custom".equals(res))
-						return getString(R.string.resolution_custom);
-					if ("fitscreen".equals(res))
-						return getString(R.string.resolution_fit);
-					return res;
-				});
-			}
-		}
-	}
-
-	// -------------------------------------------------------------------------
-
-	public static class PerformanceFragment3g extends PreferenceFragmentCompat
-	{
-		@Override public void onCreatePreferences(Bundle savedInstanceState, String rootKey)
-		{
-			getPreferenceManager().setSharedPreferencesName(PREFS_NAME);
-			getPreferenceManager().setSharedPreferencesMode(MODE_PRIVATE);
-			setPreferencesFromResource(R.xml.performance_flags_3g, rootKey);
-			if (!LibFreeRDP.hasH264Support())
-			{
-				Preference p = findPreference(getString(R.string.preference_key_h264_3g));
-				if (p != null)
-					p.setEnabled(false);
-			}
 		}
 	}
 

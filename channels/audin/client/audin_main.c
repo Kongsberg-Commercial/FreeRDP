@@ -99,6 +99,7 @@ typedef struct
 
 	BOOL initialized;
 	UINT32 version;
+	BOOL connected;
 } AUDIN_PLUGIN;
 
 static BOOL audin_process_addin_args(AUDIN_PLUGIN* audin, const ADDIN_ARGV* args);
@@ -487,7 +488,6 @@ static UINT audin_process_open(AUDIN_PLUGIN* audin, AUDIN_CHANNEL_CALLBACK* call
 	Stream_Read_UINT32(s, initialFormat);
 	WLog_Print(audin->log, WLOG_DEBUG, "FramesPerPacket=%" PRIu32 " initialFormat=%" PRIu32 "",
 	           FramesPerPacket, initialFormat);
-	audin->FramesPerPacket = FramesPerPacket;
 
 	if (initialFormat >= callback->formats_count)
 	{
@@ -496,6 +496,15 @@ static UINT audin_process_open(AUDIN_PLUGIN* audin, AUDIN_CHANNEL_CALLBACK* call
 		return ERROR_INVALID_DATA;
 	}
 
+	/* The RDP protocol field allows UINT32_MAX, but most backend API use INT32 as input parameter
+	 * or do some math with it, so ensure that the value does not exceed reasonable limits */
+	if (FramesPerPacket >= INT32_MAX)
+	{
+		WLog_Print(audin->log, WLOG_ERROR, "invalid frames per packet %" PRIu32, FramesPerPacket);
+		return ERROR_INVALID_DATA;
+	}
+
+	audin->FramesPerPacket = FramesPerPacket;
 	audin->format = &callback->formats[initialFormat];
 
 	if (!audin_open_device(audin, callback))
@@ -578,7 +587,7 @@ static UINT audin_on_data_received(IWTSVirtualChannelCallback* pChannelCallback,
 	if (!audin)
 		return ERROR_INTERNAL_ERROR;
 
-	if (!Stream_CheckAndLogRequiredCapacity(TAG, data, 1))
+	if (!Stream_CheckAndLogRequiredLength(TAG, data, 1))
 		return ERROR_NO_DATA;
 
 	Stream_Read_UINT8(data, MessageId);
@@ -638,6 +647,7 @@ static UINT audin_on_close(IWTSVirtualChannelCallback* pChannelCallback)
 	audin->format = nullptr;
 	audio_formats_free(callback->formats, callback->formats_count);
 	free(callback);
+	audin->connected = FALSE;
 	return error;
 }
 
@@ -659,6 +669,13 @@ static UINT audin_on_new_channel_connection(IWTSListenerCallback* pListenerCallb
 
 	AUDIN_PLUGIN* audin = (AUDIN_PLUGIN*)listener_callback->plugin;
 	WLog_Print(audin->log, WLOG_TRACE, "...");
+
+	if (audin->connected)
+	{
+		WLog_Print(audin->log, WLOG_ERROR, "Channel already connected, terminating.");
+		return ERROR_DEVICE_ALREADY_ATTACHED;
+	}
+
 	AUDIN_CHANNEL_CALLBACK* callback =
 	    (AUDIN_CHANNEL_CALLBACK*)calloc(1, sizeof(AUDIN_CHANNEL_CALLBACK));
 
@@ -674,6 +691,7 @@ static UINT audin_on_new_channel_connection(IWTSListenerCallback* pListenerCallb
 	callback->channel_mgr = listener_callback->channel_mgr;
 	callback->channel = pChannel;
 	*ppCallback = &callback->iface;
+	audin->connected = TRUE;
 	return CHANNEL_RC_OK;
 }
 
@@ -1000,6 +1018,9 @@ FREERDP_ENTRY_POINT(UINT VCAPITYPE audin_DVCPluginEntry(IDRDYNVC_ENTRY_POINTS* p
 #endif
 #if defined(WITH_ALSA)
 		{ "alsa", "default" },
+#endif
+#if defined(WITH_AAUDIO)
+		{ "aaudio", "default" },
 #endif
 #if defined(WITH_OPENSLES)
 		{ "opensles", "default" },

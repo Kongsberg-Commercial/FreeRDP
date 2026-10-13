@@ -329,7 +329,7 @@ rdpgfx_send_reset_graphics_pdu(RdpgfxServerContext* context, const RDPGFX_RESET_
 		Stream_Free(s, TRUE);
 		return ERROR_INVALID_DATA;
 	}
-	if (!Stream_SafeSeek(s, RDPGFX_RESET_GRAPHICS_PDU_SIZE - pos))
+	if (!Stream_SafeZero(s, RDPGFX_RESET_GRAPHICS_PDU_SIZE - pos))
 	{
 		Stream_Free(s, TRUE);
 		return ERROR_INVALID_DATA;
@@ -656,7 +656,7 @@ WINPR_ATTR_NODISCARD static UINT rdpgfx_write_h264_metablock(wLog* log, wStream*
 	UINT error = CHANNEL_RC_OK;
 
 	WINPR_ASSERT(meta);
-	if (!Stream_EnsureRemainingCapacity(s, 4 + meta->numRegionRects * 10))
+	if (!Stream_EnsureRemainingCapacity(s, 4ull + meta->numRegionRects * 10ull))
 		return ERROR_OUTOFMEMORY;
 
 	Stream_Write_UINT32(s, meta->numRegionRects); /* numRegionRects (4 bytes) */
@@ -747,7 +747,7 @@ WINPR_ATTR_NODISCARD static UINT rdpgfx_write_surface_command(wLog* log, wStream
 	if (cmd->codecId == RDPGFX_CODECID_CAPROGRESSIVE ||
 	    cmd->codecId == RDPGFX_CODECID_CAPROGRESSIVE_V2)
 	{
-		if (!Stream_EnsureRemainingCapacity(s, 13 + cmd->length))
+		if (!Stream_EnsureRemainingCapacity(s, 13ull + cmd->length))
 			return ERROR_INTERNAL_ERROR;
 		/* Write RDPGFX_CMDID_WIRETOSURFACE_2 format for CAPROGRESSIVE */
 		Stream_Write_UINT16(
@@ -952,7 +952,10 @@ rdpgfx_send_surface_frame_command(RdpgfxServerContext* context, const RDPGFX_SUR
 
 		if (!rdpgfx_write_start_frame_pdu(s, startFrame) ||
 		    !rdpgfx_server_packet_complete_header(s, position))
+		{
+			error = ERROR_INTERNAL_ERROR;
 			goto error;
+		}
 	}
 
 	/* Write RDPGFX_CMDID_WIRETOSURFACE_1 or RDPGFX_CMDID_WIRETOSURFACE_2 */
@@ -977,7 +980,10 @@ rdpgfx_send_surface_frame_command(RdpgfxServerContext* context, const RDPGFX_SUR
 		}
 
 		if (!rdpgfx_server_packet_complete_header(s, pos))
+		{
+			error = ERROR_INTERNAL_ERROR;
 			goto error;
+		}
 	}
 
 	/* Write end frame if exists */
@@ -995,7 +1001,10 @@ rdpgfx_send_surface_frame_command(RdpgfxServerContext* context, const RDPGFX_SUR
 
 		if (!rdpgfx_write_end_frame_pdu(s, endFrame) ||
 		    !rdpgfx_server_packet_complete_header(s, position))
+		{
+			error = ERROR_INTERNAL_ERROR;
 			goto error;
+		}
 	}
 
 	return rdpgfx_server_packet_send(context, s);
@@ -1549,7 +1558,7 @@ WINPR_ATTR_NODISCARD static UINT rdpgfx_server_receive_pdu(RdpgfxServerContext* 
 	WINPR_ASSERT(context);
 	WINPR_ASSERT(context->priv);
 
-	if ((error = rdpgfx_read_header(context->priv->log, s, &header)))
+	if ((error = rdpgfx_read_header(context->priv->log, s, &header, nullptr)))
 	{
 		WLog_Print(context->priv->log, WLOG_ERROR,
 		           "rdpgfx_read_header failed with error %" PRIu32 "!", error);

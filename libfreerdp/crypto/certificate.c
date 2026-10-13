@@ -60,7 +60,6 @@
 #define TAG FREERDP_TAG("core")
 
 #ifdef WITH_DEBUG_CERTIFICATE
-#define CERTIFICATE_TAG FREERDP_TAG("core.certificate")
 #define DEBUG_CERTIFICATE(...) WLog_DBG(TAG, __VA_ARGS__)
 #else
 #define DEBUG_CERTIFICATE(...) \
@@ -261,7 +260,7 @@ BOOL cert_blob_write(const rdpCertBlob* blob, wStream* s)
 {
 	WINPR_ASSERT(blob);
 
-	if (!Stream_EnsureRemainingCapacity(s, 4 + blob->length))
+	if (!Stream_EnsureRemainingCapacity(s, 4ull + blob->length))
 		return FALSE;
 
 	Stream_Write_UINT32(s, blob->length);
@@ -919,7 +918,7 @@ static BOOL cert_write_rsa_public_key(wStream* s, const rdpCertificate* cert)
 
 	const size_t wPublicKeyBlobLen = 16 + pubExpLen + keyLen;
 	WINPR_ASSERT(wPublicKeyBlobLen <= UINT16_MAX);
-	if (!Stream_EnsureRemainingCapacity(s, 2 + wPublicKeyBlobLen))
+	if (!Stream_EnsureRemainingCapacity(s, 2ull + wPublicKeyBlobLen))
 		return FALSE;
 	Stream_Write_UINT16(s, (UINT16)wPublicKeyBlobLen);
 	Stream_Write(s, rsa_magic, sizeof(rsa_magic));
@@ -945,7 +944,8 @@ static BOOL cert_write_rsa_signature(wStream* s, const void* sigData, size_t sig
 	                               sizeof(encryptedSignature)) < 0)
 		return FALSE;
 
-	if (!Stream_EnsureRemainingCapacity(s, 2 * sizeof(UINT16) + sizeof(encryptedSignature) + 8))
+	if (!Stream_EnsureRemainingCapacity(s,
+	                                    2ull * sizeof(UINT16) + sizeof(encryptedSignature) + 8ull))
 		return FALSE;
 	Stream_Write_UINT16(s, BB_RSA_SIGNATURE_BLOB);
 	Stream_Write_UINT16(s, sizeof(encryptedSignature) + 8); /* wSignatureBlobLen */
@@ -1530,64 +1530,6 @@ fail:
 	return nullptr;
 }
 
-static BOOL bio_read_pem(BIO* bio, char** ppem, size_t* plength)
-{
-	BOOL rc = FALSE;
-
-	WINPR_ASSERT(bio);
-	WINPR_ASSERT(ppem);
-
-	const size_t blocksize = 2048;
-	size_t offset = 0;
-	size_t length = blocksize;
-	char* pem = nullptr;
-
-	*ppem = nullptr;
-	if (plength)
-		*plength = 0;
-
-	while (offset < length)
-	{
-		char* tmp = realloc(pem, length + 1);
-		if (!tmp)
-			goto fail;
-		pem = tmp;
-
-		ERR_clear_error();
-
-		const int status = BIO_read(bio, &pem[offset], (int)(length - offset));
-		if (status < 0)
-		{
-			WLog_ERR(TAG, "failed to read certificate");
-			goto fail;
-		}
-
-		if (status == 0)
-			break;
-
-		offset += (size_t)status;
-		if (length - offset > 0)
-			break;
-		length += blocksize;
-	}
-
-	if (pem)
-	{
-		if (offset >= length)
-			goto fail;
-		pem[offset] = '\0';
-	}
-	*ppem = pem;
-	if (plength)
-		*plength = offset;
-	rc = TRUE;
-fail:
-	if (!rc)
-		free(pem);
-
-	return rc;
-}
-
 char* freerdp_certificate_get_pem(const rdpCertificate* cert, size_t* pLength)
 {
 	return freerdp_certificate_get_pem_ex(cert, pLength, TRUE);
@@ -1637,7 +1579,7 @@ char* freerdp_certificate_get_pem_ex(const rdpCertificate* cert, size_t* pLength
 		}
 	}
 
-	(void)bio_read_pem(bio, &pem, pLength);
+	pem = x509_utils_bio_read(bio, pLength);
 
 fail:
 	BIO_free_all(bio);
@@ -1740,6 +1682,13 @@ char** freerdp_certificate_get_dns_names(const rdpCertificate* cert, size_t* pco
 	return x509_utils_get_dns_names(cert->x509, pcount, pplengths);
 }
 
+char** freerdp_certificate_get_ip_names(const rdpCertificate* cert, size_t* pcount,
+                                        size_t** pplengths)
+{
+	WINPR_ASSERT(cert);
+	return x509_utils_get_ip_names(cert->x509, pcount, pplengths);
+}
+
 char* freerdp_certificate_get_common_name(const rdpCertificate* cert, size_t* plength)
 {
 	WINPR_ASSERT(cert);
@@ -1755,6 +1704,11 @@ WINPR_MD_TYPE freerdp_certificate_get_signature_alg(const rdpCertificate* cert)
 void freerdp_certificate_free_dns_names(size_t count, size_t* lengths, char** names)
 {
 	x509_utils_dns_names_free(count, lengths, names);
+}
+
+void freerdp_certificate_free_ip_names(size_t count, size_t* lengths, char** names)
+{
+	x509_utils_ip_names_free(count, lengths, names);
 }
 
 char* freerdp_certificate_get_hash(const rdpCertificate* cert, const char* hash, size_t* plength)

@@ -65,6 +65,10 @@ public class ShortcutsActivity extends AppCompatActivity
 			@Override public void onDelete(long id)
 			{
 			}
+
+			@Override public void onExport(BookmarkBase bookmark)
+			{
+			}
 		});
 
 		binding.recyclerViewShortcuts.setLayoutManager(new LinearLayoutManager(this));
@@ -115,8 +119,7 @@ public class ShortcutsActivity extends AppCompatActivity
 			        ShortcutInfoCompat shortcutInfo =
 			            new ShortcutInfoCompat.Builder(this, "shortcut_" + strRef.hashCode())
 			                .setShortLabel(label)
-			                .setIcon(IconCompat.createWithResource(
-			                    this, R.drawable.icon_launcher_freerdp))
+			                .setIcon(IconCompat.createWithResource(this, R.mipmap.ic_launcher))
 			                .setIntent(shortcutIntent)
 			                .build();
 

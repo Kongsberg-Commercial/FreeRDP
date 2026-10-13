@@ -1,4 +1,12 @@
-/* Bookmark entity/domain model converter */
+/*
+   Bookmark entity/domain model converter
+
+   Copyright 2026 Ibrahim Sevinc <ibrahim.sevinc.mail@gmail.com>
+
+   This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+   If a copy of the MPL was not distributed with this file, You can obtain one at
+   http://mozilla.org/MPL/2.0/.
+*/
 
 package com.freerdp.freerdpcore.data;
 
@@ -27,6 +35,7 @@ public final class BookmarkConverter
 		screen.setResolution(e.resolution);
 		screen.setWidth(e.width);
 		screen.setHeight(e.height);
+		screen.setScale(e.scaleMode, e.scaleDesktop, e.scaleDevice);
 
 		BookmarkBase.PerformanceFlags perf = bm.getPerformanceFlags();
 		perf.setRemoteFX(e.perfRemoteFx);
@@ -40,31 +49,21 @@ public final class BookmarkConverter
 		perf.setDesktopComposition(e.perfDesktopComposition);
 
 		BookmarkBase.AdvancedSettings adv = bm.getAdvancedSettings();
-		adv.setEnable3GSettings(e.enable3gSettings);
+		adv.setLoadBalanceInfo(e.loadbalanceinfo);
 		adv.setRedirectSDCard(e.redirectSdcard);
 		adv.setRedirectSound(e.redirectSound);
 		adv.setRedirectMicrophone(e.redirectMicrophone);
+		adv.setRedirectCamera(e.redirectCamera);
+		adv.setRedirectPrinter(e.redirectPrinter);
 		adv.setSecurity(e.security);
 		adv.setRemoteProgram(e.remoteProgram);
+		adv.setAlternateShell(e.alternateShell);
 		adv.setWorkDir(e.workDir);
 		adv.setConsoleMode(e.consoleMode);
-
-		BookmarkBase.ScreenSettings screen3g = adv.getScreen3G();
-		screen3g.setColors(e.screen3gColors);
-		screen3g.setResolution(e.screen3gResolution);
-		screen3g.setWidth(e.screen3gWidth);
-		screen3g.setHeight(e.screen3gHeight);
-
-		BookmarkBase.PerformanceFlags perf3g = adv.getPerformance3G();
-		perf3g.setRemoteFX(e.perf3gRemoteFx);
-		perf3g.setGfx(e.perf3gGfx);
-		perf3g.setH264(e.perf3gGfxH264);
-		perf3g.setWallpaper(e.perf3gWallpaper);
-		perf3g.setTheming(e.perf3gTheming);
-		perf3g.setFullWindowDrag(e.perf3gFullWindowDrag);
-		perf3g.setMenuAnimations(e.perf3gMenuAnimations);
-		perf3g.setFontSmoothing(e.perf3gFontSmoothing);
-		perf3g.setDesktopComposition(e.perf3gDesktopComposition);
+		adv.setTlsSecLevel(e.tlsSecLevel);
+		adv.setTlsMinLevel(e.tlsMinLevel);
+		adv.setVmConnectMode(e.vmConnectMode);
+		adv.setVmConnectGuid(e.vmConnectGuid);
 
 		bm.setEnableGatewaySettings(e.enableGatewaySettings);
 		BookmarkBase.GatewaySettings gw = bm.getGatewaySettings();
@@ -101,6 +100,9 @@ public final class BookmarkConverter
 		e.resolution = screen.getResolution();
 		e.width = screen.getWidth();
 		e.height = screen.getHeight();
+		e.scaleMode = screen.getScaleMode();
+		e.scaleDesktop = screen.getScaleDesktop();
+		e.scaleDevice = screen.getScaleDevice();
 
 		BookmarkBase.PerformanceFlags perf = bm.getPerformanceFlags();
 		e.perfRemoteFx = perf.getRemoteFX();
@@ -114,31 +116,21 @@ public final class BookmarkConverter
 		e.perfDesktopComposition = perf.getDesktopComposition();
 
 		BookmarkBase.AdvancedSettings adv = bm.getAdvancedSettings();
-		e.enable3gSettings = adv.getEnable3GSettings();
+		e.loadbalanceinfo = adv.getLoadBalanceInfo();
 		e.redirectSdcard = adv.getRedirectSDCard();
 		e.redirectSound = adv.getRedirectSound();
 		e.redirectMicrophone = adv.getRedirectMicrophone();
+		e.redirectCamera = adv.getRedirectCamera();
+		e.redirectPrinter = adv.getRedirectPrinter();
 		e.security = adv.getSecurity();
 		e.remoteProgram = adv.getRemoteProgram();
+		e.alternateShell = adv.getAlternateShell();
 		e.workDir = adv.getWorkDir();
 		e.consoleMode = adv.getConsoleMode();
-
-		BookmarkBase.ScreenSettings screen3g = adv.getScreen3G();
-		e.screen3gColors = screen3g.getColors();
-		e.screen3gResolution = screen3g.getResolution();
-		e.screen3gWidth = screen3g.getWidth();
-		e.screen3gHeight = screen3g.getHeight();
-
-		BookmarkBase.PerformanceFlags perf3g = adv.getPerformance3G();
-		e.perf3gRemoteFx = perf3g.getRemoteFX();
-		e.perf3gGfx = perf3g.getGfx();
-		e.perf3gGfxH264 = perf3g.getH264();
-		e.perf3gWallpaper = perf3g.getWallpaper();
-		e.perf3gTheming = perf3g.getTheming();
-		e.perf3gFullWindowDrag = perf3g.getFullWindowDrag();
-		e.perf3gMenuAnimations = perf3g.getMenuAnimations();
-		e.perf3gFontSmoothing = perf3g.getFontSmoothing();
-		e.perf3gDesktopComposition = perf3g.getDesktopComposition();
+		e.tlsSecLevel = adv.getTlsSecLevel();
+		e.tlsMinLevel = adv.getTlsMinLevel();
+		e.vmConnectMode = adv.getVmConnectMode();
+		e.vmConnectGuid = adv.getVmConnectGuid();
 
 		e.enableGatewaySettings = bm.getEnableGatewaySettings();
 		BookmarkBase.GatewaySettings gw = bm.getGatewaySettings();

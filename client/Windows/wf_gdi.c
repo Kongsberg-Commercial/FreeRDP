@@ -421,7 +421,7 @@ void wf_resize_window(wfContext* wfc)
 			xpos = wfc->client_x;
 			ypos = wfc->client_y;
 		}
-		SetWindowPos(wfc->hwnd, HWND_TOP, xpos, ypos, width, height, 0 /*SWP_FRAMECHANGED*/);
+		SetWindowPos(wfc->hwnd, HWND_TOP, xpos, ypos, width, height, SWP_FRAMECHANGED);
 		// wf_size_scrollbars(wfc,  wfc->client_width, wfc->client_height);
 	}
 
@@ -780,13 +780,19 @@ static BOOL wf_gdi_mem3blt(rdpContext* context, MEM3BLT_ORDER* mem3blt)
 		case GDI_BS_PATTERN:
 		{
 			HBITMAP bmp = CreateBitmap(8, 8, 1, mem3blt->brush.bpp, mem3blt->brush.data);
+			if (!bmp)
+				goto fail;
 			brush = CreatePatternBrush(bmp);
+			DeleteObject(bmp);
 		}
 		break;
 
 		default:
 			goto fail;
 	}
+
+	if (!brush)
+		goto fail;
 
 	orgBrush = SelectObject(hdc, brush);
 
@@ -802,7 +808,10 @@ static BOOL wf_gdi_mem3blt(rdpContext* context, MEM3BLT_ORDER* mem3blt)
 fail:
 
 	if (brush)
+	{
 		SelectObject(hdc, orgBrush);
+		DeleteObject(brush);
+	}
 
 	SetTextColor(hdc, orgColor);
 	return rc;

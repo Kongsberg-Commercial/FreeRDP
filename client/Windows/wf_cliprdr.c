@@ -225,23 +225,25 @@ static ULONG STDMETHODCALLTYPE CliprdrStream_Release(IStream* This)
 static HRESULT STDMETHODCALLTYPE CliprdrStream_Read(IStream* This, void* pv, ULONG cb,
                                                     ULONG* pcbRead)
 {
-	int ret;
 	CliprdrStream* instance = (CliprdrStream*)This;
-	wfClipboard* clipboard;
 
 	if (!pv || !pcbRead || !instance)
 		return E_INVALIDARG;
 
-	clipboard = (wfClipboard*)instance->m_pData;
+	wfClipboard* clipboard = (wfClipboard*)instance->m_pData;
 	*pcbRead = 0;
 
 	if (instance->m_lOffset.QuadPart >= instance->m_lSize.QuadPart)
 		return S_FALSE;
 
-	ret = cliprdr_send_request_filecontents(clipboard, (void*)This, instance->m_lIndex,
-	                                        FILECONTENTS_RANGE, instance->m_lOffset.QuadPart, cb);
+	const int ret =
+	    cliprdr_send_request_filecontents(clipboard, (void*)This, instance->m_lIndex,
+	                                      FILECONTENTS_RANGE, instance->m_lOffset.QuadPart, cb);
 
 	if (ret < 0)
+		return E_FAIL;
+
+	if (clipboard->req_fsize > cb)
 		return E_FAIL;
 
 	if (clipboard->req_fdata)
@@ -456,7 +458,10 @@ static CliprdrStream* CliprdrStream_New(ULONG index, void* pData, const FILEDESC
 					success = TRUE;
 				}
 
-				instance->m_lSize.QuadPart = *((LONGLONG*)clipboard->req_fdata);
+				if (clipboard->req_fsize < 8)
+					success = FALSE;
+				else
+					instance->m_lSize.QuadPart = *((LONGLONG*)clipboard->req_fdata);
 				free(clipboard->req_fdata);
 			}
 			else
@@ -1327,13 +1332,15 @@ UINT cliprdr_send_request_filecontents(wfClipboard* clipboard, const void* strea
 	else if (!ResetEvent(clipboard->req_fevent))
 		rc = ERROR_INTERNAL_ERROR;
 
+	if (nreq != clipboard->req_fsize)
+		rc = ERROR_INVALID_DATA;
 	return rc;
 }
 
 static UINT cliprdr_send_response_filecontents(wfClipboard* clipboard, UINT32 streamId, UINT32 size,
                                                BYTE* data)
 {
-	CLIPRDR_FILE_CONTENTS_RESPONSE fileContentsResponse;
+	CLIPRDR_FILE_CONTENTS_RESPONSE fileContentsResponse = WINPR_C_ARRAY_INIT;
 
 	if (!clipboard || !clipboard->context || !clipboard->context->ClientFileContentsResponse)
 		return ERROR_INTERNAL_ERROR;
@@ -2433,15 +2440,13 @@ static UINT
 wf_cliprdr_server_file_contents_response(CliprdrClientContext* context,
                                          const CLIPRDR_FILE_CONTENTS_RESPONSE* fileContentsResponse)
 {
-	wfClipboard* clipboard;
-
 	if (!context || !fileContentsResponse)
 		return ERROR_INTERNAL_ERROR;
 
 	if (fileContentsResponse->common.msgFlags != CB_RESPONSE_OK)
 		return E_FAIL;
 
-	clipboard = (wfClipboard*)context->custom;
+	wfClipboard* clipboard = (wfClipboard*)context->custom;
 
 	if (!clipboard)
 		return ERROR_INTERNAL_ERROR;

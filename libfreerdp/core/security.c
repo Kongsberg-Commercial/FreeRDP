@@ -399,6 +399,7 @@ BOOL security_mac_signature(rdpRdp* rdp, const BYTE* data, UINT32 length, BYTE* 
 	if (!winpr_Digest_Init(sha1, WINPR_MD_SHA1))
 		goto out;
 
+	WINPR_ASSERT(rdp->rc4_key_len <= sizeof(rdp->sign_key));
 	if (!winpr_Digest_Update(sha1, rdp->sign_key, rdp->rc4_key_len)) /* MacKeyN */
 		goto out;
 
@@ -421,6 +422,7 @@ BOOL security_mac_signature(rdpRdp* rdp, const BYTE* data, UINT32 length, BYTE* 
 	if (!winpr_Digest_Init(md5, WINPR_MD_MD5))
 		goto out;
 
+	WINPR_ASSERT(rdp->rc4_key_len <= sizeof(rdp->sign_key));
 	if (!winpr_Digest_Update(md5, rdp->sign_key, rdp->rc4_key_len)) /* MacKeyN */
 		goto out;
 
@@ -484,6 +486,7 @@ BOOL security_salted_mac_signature(rdpRdp* rdp, const BYTE* data, UINT32 length,
 	if (!winpr_Digest_Init(sha1, WINPR_MD_SHA1))
 		goto out;
 
+	WINPR_ASSERT(rdp->rc4_key_len <= sizeof(rdp->sign_key));
 	if (!winpr_Digest_Update(sha1, rdp->sign_key, rdp->rc4_key_len)) /* MacKeyN */
 		goto out;
 
@@ -509,6 +512,7 @@ BOOL security_salted_mac_signature(rdpRdp* rdp, const BYTE* data, UINT32 length,
 	if (!winpr_Digest_Init(md5, WINPR_MD_MD5))
 		goto out;
 
+	WINPR_ASSERT(rdp->rc4_key_len <= sizeof(rdp->sign_key));
 	if (!winpr_Digest_Update(md5, rdp->sign_key, rdp->rc4_key_len)) /* MacKeyN */
 		goto out;
 
@@ -630,8 +634,16 @@ BOOL security_establish_keys(rdpRdp* rdp)
 	    freerdp_settings_get_uint32(settings, FreeRDP_ClientRandomLength);
 	const UINT32 ServerRandomLength =
 	    freerdp_settings_get_uint32(settings, FreeRDP_ServerRandomLength);
-	WINPR_ASSERT(ClientRandomLength == 32);
-	WINPR_ASSERT(ServerRandomLength == 32);
+	/* The server random is peer supplied (gcc_read_server_security_data rejects only a length
+	 * of 0) while both randoms are consumed below as fixed 32 byte values, so a shorter buffer
+	 * would be read past its end. WINPR_ASSERT is compiled out in release builds, enforce the
+	 * length at runtime. */
+	if ((ClientRandomLength != 32) || (ServerRandomLength != 32))
+	{
+		WLog_ERR(TAG, "invalid client (%" PRIu32 ") or server (%" PRIu32 ") random length",
+		         ClientRandomLength, ServerRandomLength);
+		return FALSE;
+	}
 
 	if (settings->EncryptionMethods == ENCRYPTION_METHOD_FIPS)
 	{
@@ -837,6 +849,7 @@ BOOL security_encrypt(BYTE* data, size_t length, rdpRdp* rdp)
 
 	if (rdp->encrypt_use_count >= 4096)
 	{
+		WINPR_ASSERT(rdp->rc4_key_len <= sizeof(rdp->encrypt_update_key));
 		if (!security_key_update(rdp->encrypt_key, rdp->encrypt_update_key, rdp->rc4_key_len, rdp))
 			goto fail;
 
@@ -869,6 +882,7 @@ BOOL security_decrypt(BYTE* data, size_t length, rdpRdp* rdp)
 
 	if (rdp->decrypt_use_count >= 4096)
 	{
+		WINPR_ASSERT(rdp->rc4_key_len <= sizeof(rdp->encrypt_update_key));
 		if (!security_key_update(rdp->decrypt_key, rdp->decrypt_update_key, rdp->rc4_key_len, rdp))
 			goto fail;
 

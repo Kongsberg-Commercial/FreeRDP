@@ -165,6 +165,7 @@ static BOOL rdp_redirection_get_data(wStream* s, UINT32* pLength, const BYTE** p
 	return TRUE;
 }
 
+WINPR_ATTR_NODISCARD
 static BOOL rdp_redirection_read_unicode_string(wStream* s, char** str, size_t maxLength)
 {
 	UINT32 length = 0;
@@ -173,13 +174,15 @@ static BOOL rdp_redirection_read_unicode_string(wStream* s, char** str, size_t m
 	if (!rdp_redirection_get_data(s, &length, &data))
 		return FALSE;
 
-	const WCHAR* wstr = (const WCHAR*)data;
-
-	if ((length % 2) || length < 2 || length > maxLength)
+	if ((length % 2) || (length < 2) || (length > maxLength))
 	{
 		WLog_ERR(TAG, "failure: invalid unicode string length: %" PRIu32 "", length);
 		return FALSE;
 	}
+
+	WCHAR wstr[513] = WINPR_C_ARRAY_INIT;
+	WINPR_ASSERT(ARRAYSIZE(wstr) > maxLength);
+	memcpy(wstr, data, length);
 
 	if (wstr[length / 2 - 1])
 	{
@@ -220,12 +223,13 @@ static BOOL rdp_redirection_write_base64_wchar(WINPR_ATTR_UNUSED UINT32 flag, wS
 {
 	BOOL rc = FALSE;
 
-	char* base64 = crypto_base64_encode(data, length);
+	size_t olen = 0;
+	char* base64 = crypto_base64_encode_len(data, length, &olen);
 	if (!base64)
 		return FALSE;
 
 	size_t wbase64len = 0;
-	WCHAR* wbase64 = ConvertUtf8ToWCharAlloc(base64, &wbase64len);
+	WCHAR* wbase64 = ConvertUtf8NToWCharAlloc(base64, olen, &wbase64len);
 	free(base64);
 	if (!wbase64)
 		return FALSE;
@@ -244,7 +248,7 @@ static BOOL rdp_redirection_read_base64_wchar(UINT32 flag, wStream* s, UINT32* p
 
 	if (!rdp_redirection_get_data(s, pLength, &ptr))
 		return FALSE;
-	const WCHAR* wchar = (const WCHAR*)ptr;
+	const WCHAR* wchar = WINPR_PACKED_ALIGN_CAST(const WCHAR*, ptr);
 
 	size_t utf8_len = 0;
 	char* utf8 = ConvertWCharNToUtf8Alloc(wchar, *pLength / sizeof(WCHAR), &utf8_len);
@@ -573,7 +577,7 @@ int rdp_redirection_apply_settings(rdpRdp* rdp)
 			size_t tsvlen = 0;
 
 			char* tsv =
-			    ConvertWCharNToUtf8Alloc((const WCHAR*)redirection->TsvUrl,
+			    ConvertWCharNToUtf8Alloc(WINPR_PACKED_ALIGN_CAST(const WCHAR*, redirection->TsvUrl),
 			                             redirection->TsvUrlLength / sizeof(WCHAR), &tsvlen);
 			if (!tsv || !lb)
 				valid = FALSE;
@@ -707,6 +711,8 @@ static state_run_t rdp_recv_server_redirection_pdu(rdpRdp* rdp, wStream* s)
 	{
 		if (!rdp_redirection_read_unicode_string(s, &(redirection->TargetNetAddress), 80))
 			return STATE_RUN_FAILED;
+		if (!utils_is_valid_ip(redirection->TargetNetAddress))
+			return STATE_RUN_FAILED;
 	}
 
 	if (redirection->flags & LB_LOAD_BALANCE_INFO)
@@ -726,7 +732,8 @@ static state_run_t rdp_recv_server_redirection_pdu(rdpRdp* rdp, wStream* s)
 	{
 		if (!rdp_redirection_read_unicode_string(s, &(redirection->Username), 512))
 			return STATE_RUN_FAILED;
-
+		if (winpr_str_has_newlines(redirection->Username))
+			return STATE_RUN_FAILED;
 		WLog_DBG(TAG, "Username: %s", redirection->Username);
 	}
 
@@ -734,7 +741,8 @@ static state_run_t rdp_recv_server_redirection_pdu(rdpRdp* rdp, wStream* s)
 	{
 		if (!rdp_redirection_read_unicode_string(s, &(redirection->Domain), 52))
 			return STATE_RUN_FAILED;
-
+		if (winpr_str_has_newlines(redirection->Domain))
+			return STATE_RUN_FAILED;
 		WLog_DBG(TAG, "Domain: %s", redirection->Domain);
 	}
 
@@ -780,7 +788,8 @@ static state_run_t rdp_recv_server_redirection_pdu(rdpRdp* rdp, wStream* s)
 			}
 
 			/* Ensure the text password is '\0' terminated */
-			if (_wcsnlen((const WCHAR*)redirection->Password, charLen) == charLen)
+			if (_wcsnlen(WINPR_PACKED_ALIGN_CAST(const WCHAR*, redirection->Password), charLen) ==
+			    charLen)
 			{
 				WLog_ERR(TAG, "LB_PASSWORD: missing '\\0' termination");
 				return STATE_RUN_FAILED;
@@ -792,7 +801,8 @@ static state_run_t rdp_recv_server_redirection_pdu(rdpRdp* rdp, wStream* s)
 	{
 		if (!rdp_redirection_read_unicode_string(s, &(redirection->TargetFQDN), 512))
 			return STATE_RUN_FAILED;
-
+		if (!winpr_str_is_valid_url(redirection->TargetFQDN))
+			return STATE_RUN_FAILED;
 		WLog_DBG(TAG, "TargetFQDN: %s", redirection->TargetFQDN);
 	}
 
@@ -800,7 +810,8 @@ static state_run_t rdp_recv_server_redirection_pdu(rdpRdp* rdp, wStream* s)
 	{
 		if (!rdp_redirection_read_unicode_string(s, &(redirection->TargetNetBiosName), 32))
 			return STATE_RUN_FAILED;
-
+		if (!winpr_str_is_valid_url(redirection->TargetNetBiosName))
+			return STATE_RUN_FAILED;
 		WLog_DBG(TAG, "TargetNetBiosName: %s", redirection->TargetNetBiosName);
 	}
 
@@ -870,7 +881,8 @@ static state_run_t rdp_recv_server_redirection_pdu(rdpRdp* rdp, wStream* s)
 		{
 			if (!rdp_redirection_read_unicode_string(s, &(redirection->TargetNetAddresses[i]), 80))
 				return STATE_RUN_FAILED;
-
+			if (!utils_is_valid_ip(redirection->TargetNetAddresses[i]))
+				return STATE_RUN_FAILED;
 			WLog_DBG(TAG, "TargetNetAddresses[%" PRIu32 "]: %s", i,
 			         redirection->TargetNetAddresses[i]);
 		}
@@ -898,7 +910,10 @@ state_run_t rdp_recv_enhanced_security_redirection_packet(rdpRdp* rdp, wStream* 
 	status = rdp_recv_server_redirection_pdu(rdp, s);
 
 	if (state_run_failed(status))
+	{
+		WLog_Print(rdp->log, WLOG_ERROR, "redirection packet invalid, aborting");
 		return status;
+	}
 
 	if (Stream_GetRemainingLength(s) >= 1)
 	{
@@ -943,13 +958,17 @@ void redirection_free(rdpRedirection* redirection)
 
 static SSIZE_T redir_write_string(WINPR_ATTR_UNUSED UINT32 flag, wStream* s, const char* str)
 {
-	const size_t length = (strlen(str) + 1);
+	const SSIZE_T devNameWLen = ConvertUtf8ToWChar(str, nullptr, 0);
+	if (devNameWLen < 0)
+		return -1;
+	const size_t length = WINPR_ASSERTING_INT_CAST(size_t, devNameWLen) + 1;
+	const size_t slen = strlen(str);
 	if (!Stream_EnsureRemainingCapacity(s, 4ull + length * sizeof(WCHAR)))
 		return -1;
 
 	const size_t pos = Stream_GetPosition(s);
 	Stream_Write_UINT32(s, (UINT32)length * sizeof(WCHAR));
-	if (Stream_Write_UTF16_String_From_UTF8(s, length, str, length, TRUE) < 0)
+	if (Stream_Write_UTF16_String_From_UTF8(s, length, str, slen, TRUE) < 0)
 		return -1;
 	return (SSIZE_T)(Stream_GetPosition(s) - pos);
 }
@@ -1064,7 +1083,7 @@ BOOL rdp_write_enhanced_security_redirection_packet(wStream* s, const rdpRedirec
 		{
 			UINT32 length = sizeof(UINT32);
 
-			if (!Stream_EnsureRemainingCapacity(s, 2 * sizeof(UINT32)))
+			if (!Stream_EnsureRemainingCapacity(s, 2ull * sizeof(UINT32)))
 				goto fail;
 
 			const size_t lstart = Stream_GetPosition(s);

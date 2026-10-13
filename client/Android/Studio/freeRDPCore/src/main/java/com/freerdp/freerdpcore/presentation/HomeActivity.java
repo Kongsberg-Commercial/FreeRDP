@@ -2,6 +2,7 @@
    Main/Home Activity
 
    Copyright 2013 Thincast Technologies GmbH, Author: Martin Fleisz
+   Copyright 2026 Ibrahim Sevinc <ibrahim.sevinc.mail@gmail.com>
 
    This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
    If a copy of the MPL was not distributed with this file, You can obtain one at
@@ -11,10 +12,15 @@
 package com.freerdp.freerdpcore.presentation;
 
 import androidx.appcompat.app.AlertDialog;
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.FileProvider;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -27,8 +33,15 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 
 import com.freerdp.freerdpcore.R;
 import com.freerdp.freerdpcore.databinding.HomeBinding;
+import com.freerdp.freerdpcore.domain.BookmarkBase;
 import com.freerdp.freerdpcore.domain.ConnectionReference;
 import com.freerdp.freerdpcore.utils.BookmarkListAdapter;
+import com.freerdp.freerdpcore.utils.RDPFileHelper;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 public class HomeActivity extends AppCompatActivity
 {
@@ -41,11 +54,22 @@ public class HomeActivity extends AppCompatActivity
 	private MenuItem searchMenuItem;
 	private SearchView searchView;
 
+	private ExternalDisplayManager externalDisplayManager;
+
 	@Override public void onCreate(Bundle savedInstanceState)
 	{
 		super.onCreate(savedInstanceState);
 		binding = HomeBinding.inflate(getLayoutInflater());
 		setContentView(binding.getRoot());
+
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+		    checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+		        PackageManager.PERMISSION_GRANTED)
+		{
+			requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, 0);
+		}
+
+		externalDisplayManager = new ExternalDisplayManager(this);
 
 		long heapSize = Runtime.getRuntime().maxMemory();
 		Log.i(TAG, "Max HeapSize: " + heapSize);
@@ -57,7 +81,7 @@ public class HomeActivity extends AppCompatActivity
 
 		if (Intent.ACTION_VIEW.equals(caller.getAction()) && callParameter != null)
 		{
-			String refStr = ConnectionReference.getFileReference(callParameter.getPath());
+			String refStr = ConnectionReference.getFileReference(callParameter.toString());
 			Bundle bundle = new Bundle();
 			bundle.putString(BookmarkActivity.PARAM_CONNECTION_REFERENCE, refStr);
 
@@ -76,12 +100,7 @@ public class HomeActivity extends AppCompatActivity
 				if (ConnectionReference.isBookmarkReference(refStr) ||
 				    ConnectionReference.isHostnameReference(refStr))
 				{
-					Bundle bundle = new Bundle();
-					bundle.putString(SessionActivity.PARAM_CONNECTION_REFERENCE, refStr);
-
-					Intent sessionIntent = new Intent(HomeActivity.this, SessionActivity.class);
-					sessionIntent.putExtras(bundle);
-					startActivity(sessionIntent);
+					externalDisplayManager.launchSessionWithDisplayPicker(refStr);
 
 					if (searchView != null)
 					{
@@ -99,6 +118,11 @@ public class HomeActivity extends AppCompatActivity
 			@Override public void onDelete(long id)
 			{
 				viewModel.deleteBookmark(id);
+			}
+
+			@Override public void onExport(BookmarkBase bookmark)
+			{
+				shareRdpFile(bookmark);
 			}
 		});
 
@@ -186,6 +210,28 @@ public class HomeActivity extends AppCompatActivity
 		}
 
 		return true;
+	}
+
+	private void shareRdpFile(BookmarkBase bookmark)
+	{
+		String filename = bookmark.getLabel().replaceAll("[^\\w. -]", "_") + ".rdp";
+		File file = new File(getCacheDir(), filename);
+		try (FileOutputStream out = new FileOutputStream(file))
+		{
+			out.write(RDPFileHelper.toRdpString(bookmark).getBytes(StandardCharsets.UTF_8));
+		}
+		catch (IOException e)
+		{
+			Log.e(TAG, "Failed to write RDP file for sharing", e);
+			Toast.makeText(this, R.string.export_failed, Toast.LENGTH_SHORT).show();
+			return;
+		}
+		Uri uri = FileProvider.getUriForFile(this, "com.freerdp.afreerdp.fileprovider", file);
+		Intent share = new Intent(Intent.ACTION_SEND);
+		share.setType("application/x-rdp");
+		share.putExtra(Intent.EXTRA_STREAM, uri);
+		share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+		startActivity(Intent.createChooser(share, bookmark.getLabel()));
 	}
 
 	private void setupSearchView(Menu menu)

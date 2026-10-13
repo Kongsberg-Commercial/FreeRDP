@@ -18,15 +18,15 @@ import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.drawable.BitmapDrawable;
-import android.os.Build;
 import android.text.InputType;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.InputDevice;
-import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.PointerIcon;
 import android.view.ScaleGestureDetector;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
@@ -36,14 +36,13 @@ import androidx.annotation.NonNull;
 import com.freerdp.freerdpcore.application.SessionState;
 import com.freerdp.freerdpcore.utils.DoubleGestureDetector;
 import com.freerdp.freerdpcore.utils.GestureDetector;
-import com.freerdp.freerdpcore.utils.Mouse;
 
 import java.util.Stack;
 
 public class SessionView extends View
 {
 	public static final float MAX_SCALE_FACTOR = 3.0f;
-	public static final float MIN_SCALE_FACTOR = 1.0f;
+	public static final float MIN_SCALE_FACTOR = 0.75f;
 	private static final String TAG = "SessionView";
 	private static final float SCALE_FACTOR_DELTA = 0.0001f;
 	private static final float TOUCH_SCROLL_DELTA = 10.0f;
@@ -54,6 +53,8 @@ public class SessionView extends View
 	private int touchPointerPaddingWidth = 0;
 	private int touchPointerPaddingHeight = 0;
 	private SessionViewListener sessionViewListener = null;
+	private OnZoomChangedListener zoomChangedListener = null;
+	private boolean railMode = false;
 	// helpers for scaling gesture handling
 	private float scaleFactor = 1.0f;
 	private Matrix scaleMatrix;
@@ -61,6 +62,18 @@ public class SessionView extends View
 	private RectF invalidRegionF;
 	private GestureDetector gestureDetector;
 	private SessionState currentSession;
+
+	// Pixels of touchpad travel per wheel notch, and leftover between events.
+	private float notchPxX = 1.0f;
+	private float notchPxY = 1.0f;
+	private float touchpadScrollX = 0;
+	private float touchpadScrollY = 0;
+
+	private int[] cursorPixels = null;
+	private int cursorWidth = 0;
+	private int cursorHeight = 0;
+	private int cursorHotX = 0;
+	private int cursorHotY = 0;
 
 	// private static final String TAG = "FreeRDP.SessionView";
 	private DoubleGestureDetector doubleGestureDetector;
@@ -90,6 +103,9 @@ public class SessionView extends View
 
 		invalidRegions = new Stack<>();
 		gestureDetector = new GestureDetector(context, new SessionGestureListener(), null, true);
+		ViewConfiguration vc = ViewConfiguration.get(context);
+		notchPxX = Math.max(1.0f, vc.getScaledHorizontalScrollFactor());
+		notchPxY = Math.max(1.0f, vc.getScaledVerticalScrollFactor());
 		doubleGestureDetector =
 		    new DoubleGestureDetector(context, null, new SessionDoubleGestureListener());
 
@@ -162,15 +178,36 @@ public class SessionView extends View
 		return scaleFactor;
 	}
 
+	public void setRailMode(boolean rail)
+	{
+		if (railMode == rail)
+			return;
+		railMode = rail;
+		invalidate();
+	}
+
+	public interface OnZoomChangedListener
+	{
+		void onZoomChanged(float zoom);
+	}
+
+	public void setOnZoomChangedListener(OnZoomChangedListener l)
+	{
+		zoomChangedListener = l;
+	}
+
 	public void setZoom(float factor)
 	{
-		// calc scale matrix and inverse scale matrix (to correctly transform the view and moues
-		// coordinates)
 		scaleFactor = factor;
 		scaleMatrix.setScale(scaleFactor, scaleFactor);
 		invScaleMatrix.setScale(1.0f / scaleFactor, 1.0f / scaleFactor);
 
-		// update layout
+		if (cursorPixels != null)
+			applyScaledCursor();
+
+		if (zoomChangedListener != null)
+			zoomChangedListener.onZoomChanged(scaleFactor);
+
 		requestLayout();
 	}
 
@@ -241,7 +278,7 @@ public class SessionView extends View
 		canvas.save();
 		canvas.concat(scaleMatrix);
 		canvas.drawColor(Color.BLACK);
-		if (surface != null)
+		if (!railMode && surface != null)
 		{
 			surface.draw(canvas);
 		}
@@ -277,6 +314,11 @@ public class SessionView extends View
 		if (event.isFromSource(InputDevice.SOURCE_MOUSE))
 		{
 			int action = event.getActionMasked();
+			if (event.getClassification() == MotionEvent.CLASSIFICATION_TWO_FINGER_SWIPE)
+			{
+				handleTouchpadScroll(event);
+				return true;
+			}
 			if (action == MotionEvent.ACTION_MOVE && event.getButtonState() != 0)
 			{
 				MotionEvent mapped = mapTouchEvent(event);
@@ -292,16 +334,54 @@ public class SessionView extends View
 		return res;
 	}
 
+	// Handle physical touchpad two-finger scroll gesture.
+	private void handleTouchpadScroll(MotionEvent event)
+	{
+		if (event.getActionMasked() != MotionEvent.ACTION_MOVE)
+		{
+			touchpadScrollX = 0;
+			touchpadScrollY = 0;
+			return;
+		}
+
+		touchpadScrollY += gestureDistance(event, MotionEvent.AXIS_GESTURE_SCROLL_Y_DISTANCE);
+		while (Math.abs(touchpadScrollY) >= notchPxY)
+		{
+			final boolean down = touchpadScrollY > 0;
+			touchpadScrollY += down ? -notchPxY : notchPxY;
+			sessionViewListener.onSessionViewScroll(down);
+		}
+
+		touchpadScrollX += gestureDistance(event, MotionEvent.AXIS_GESTURE_SCROLL_X_DISTANCE);
+		while (Math.abs(touchpadScrollX) >= notchPxX)
+		{
+			final boolean right = touchpadScrollX > 0;
+			touchpadScrollX += right ? -notchPxX : notchPxX;
+			sessionViewListener.onSessionViewHScroll(right);
+		}
+	}
+
+	// Sum batched historical and current sample deltas for a gesture axis.
+	private static float gestureDistance(MotionEvent event, int axis)
+	{
+		float distance = 0;
+		for (int i = 0; i < event.getHistorySize(); i++)
+			distance += event.getHistoricalAxisValue(axis, 0, i);
+		return distance + event.getAxisValue(axis);
+	}
+
 	// Handle all physical mouse buttons here; finger taps come via onSingleTapUp.
 	@Override public boolean onGenericMotionEvent(MotionEvent event)
 	{
-		if (!event.isFromSource(InputDevice.SOURCE_MOUSE))
+		final boolean isPointer = event.isFromSource(InputDevice.SOURCE_CLASS_POINTER);
+		if (!isPointer)
 			return false;
 
+		final boolean isMouse = event.isFromSource(InputDevice.SOURCE_MOUSE);
 		int action = event.getActionMasked();
 
-		if (action == MotionEvent.ACTION_BUTTON_PRESS ||
-		    action == MotionEvent.ACTION_BUTTON_RELEASE)
+		if (isMouse && (action == MotionEvent.ACTION_BUTTON_PRESS ||
+		                action == MotionEvent.ACTION_BUTTON_RELEASE))
 		{
 			boolean down = action == MotionEvent.ACTION_BUTTON_PRESS;
 			MotionEvent mapped = mapTouchEvent(event);
@@ -364,6 +444,39 @@ public class SessionView extends View
 		void onSessionViewScroll(boolean down);
 
 		void onSessionViewHScroll(boolean right);
+	}
+
+	public void setRemoteCursor(int[] pixels, int width, int height, int hotX, int hotY)
+	{
+		if (pixels == null || width == 0 || height == 0)
+		{
+			cursorPixels = null;
+			setPointerIcon(PointerIcon.getSystemIcon(getContext(), PointerIcon.TYPE_NULL));
+			return;
+		}
+		cursorPixels = pixels;
+		cursorWidth = width;
+		cursorHeight = height;
+		cursorHotX = hotX;
+		cursorHotY = hotY;
+		applyScaledCursor();
+	}
+
+	private void applyScaledCursor()
+	{
+		int scaledWidth = Math.max(1, (int)(cursorWidth * scaleFactor));
+		int scaledHeight = Math.max(1, (int)(cursorHeight * scaleFactor));
+		Bitmap bm =
+		    Bitmap.createBitmap(cursorPixels, cursorWidth, cursorHeight, Bitmap.Config.ARGB_8888);
+		Bitmap scaled = Bitmap.createScaledBitmap(bm, scaledWidth, scaledHeight, true);
+		PointerIcon icon =
+		    PointerIcon.create(scaled, cursorHotX * scaleFactor, cursorHotY * scaleFactor);
+		setPointerIcon(icon);
+	}
+
+	public void setDefaultCursor()
+	{
+		setPointerIcon(PointerIcon.getSystemIcon(getContext(), PointerIcon.TYPE_ARROW));
 	}
 
 	private class SessionGestureListener extends GestureDetector.SimpleOnGestureListener
