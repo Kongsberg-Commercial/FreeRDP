@@ -211,7 +211,8 @@ struct rdp_rdp
 	FreeRDPTimer* timer;
 	WINPR_ATTR_NODISCARD pGetCommonAccessToken GetCommonAccessToken;
 
-	/* Primary port for /fallback-server; the host is kept in RedirectionTargetFQDN */
+	/* Primary server saved by the /fallback-server logic for reconnecting back to it */
+	char* fallbackPrimaryHostname;
 	UINT32 fallbackPrimaryPort;
 };
 

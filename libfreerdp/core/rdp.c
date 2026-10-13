@@ -2635,6 +2635,7 @@ void rdp_free(rdpRdp* rdp)
 			(void)CloseHandle(rdp->abortEvent);
 		aad_free(rdp->aad);
 		WINPR_JSON_Delete(rdp->wellknown);
+		free(rdp->fallbackPrimaryHostname);
 		DeleteCriticalSection(&rdp->critical);
 		WLog_Discard(rdp->log);
 		free(rdp);

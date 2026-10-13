@@ -4888,10 +4888,17 @@ static int parse_command_line(rdpSettings* settings, const COMMAND_LINE_ARGUMENT
 			if (!arg->Value)
 				return fail_at(arg, COMMAND_LINE_ERROR_UNEXPECTED_VALUE);
 
-			// Store in FreeRDP_RedirectionTargetNetBiosName setting
-			// (repurposing this setting for fallback server)
-			if (!freerdp_settings_set_string(settings, FreeRDP_RedirectionTargetNetBiosName,
-			                                 arg->Value))
+			char* host = nullptr;
+			int port = -1;
+			if (!freerdp_parse_hostname(arg->Value, &host, &port))
+				return fail_at(arg, COMMAND_LINE_ERROR_UNEXPECTED_VALUE);
+
+			const BOOL ok =
+			    freerdp_settings_set_string(settings, FreeRDP_FallbackServerHostname, host) &&
+			    freerdp_settings_set_uint32(settings, FreeRDP_FallbackServerPort,
+			                                (port > 0) ? (UINT32)port : 3389);
+			free(host);
+			if (!ok)
 				return fail_at(arg, COMMAND_LINE_ERROR_MEMORY);
 		}
 		CommandLineSwitchCase(arg, "spn-class")

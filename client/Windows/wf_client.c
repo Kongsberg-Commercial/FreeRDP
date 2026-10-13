@@ -1159,8 +1159,6 @@ static void wf_primary_probe_stop(wfContext* wfc)
 	}
 	if (wfc->primaryAvailable)
 		(void)ResetEvent(wfc->primaryAvailable);
-	free(wfc->primaryProbeHost);
-	wfc->primaryProbeHost = nullptr;
 }
 
 /* Starts watching the primary when the current session is on the fallback */
@@ -1175,13 +1173,12 @@ static void wf_primary_probe_update(wfContext* wfc)
 	if (!freerdp_settings_get_bool(settings, FreeRDP_AutoReconnectionEnabled))
 		return;
 
-	const char* fallback =
-	    freerdp_settings_get_string(settings, FreeRDP_RedirectionTargetNetBiosName);
-	const char* primary = freerdp_settings_get_string(settings, FreeRDP_RedirectionTargetFQDN);
+	const char* fallback = freerdp_settings_get_string(settings, FreeRDP_FallbackServerHostname);
 	const char* current = freerdp_settings_get_string(settings, FreeRDP_ServerHostname);
-	if (!fallback || !*fallback || !primary || !*primary || !current)
+	const UINT32 currentPort = freerdp_settings_get_uint32(settings, FreeRDP_ServerPort);
+	if (!fallback || !*fallback || !wfc->primaryProbeHost || !current)
 		return;
-	if (strcmp(current, primary) == 0)
+	if ((strcmp(current, wfc->primaryProbeHost) == 0) && (currentPort == wfc->primaryProbePort))
 		return;
 
 	if (!wfc->primaryProbeStop)
@@ -1191,10 +1188,6 @@ static void wf_primary_probe_update(wfContext* wfc)
 	if (!wfc->primaryProbeStop || !wfc->primaryAvailable)
 		return;
 	(void)ResetEvent(wfc->primaryProbeStop);
-
-	wfc->primaryProbeHost = _strdup(primary);
-	if (!wfc->primaryProbeHost)
-		return;
 
 	wfc->primaryProbeThread = CreateThread(nullptr, 0, wf_primary_probe_thread, wfc, 0, nullptr);
 	if (wfc->primaryProbeThread)
@@ -1214,11 +1207,16 @@ static DWORD WINAPI wf_client_thread(LPVOID lpParam)
 	freerdp* instance = (freerdp*)lpParam;
 	WINPR_ASSERT(instance);
 
+	wfContext* wfc = (wfContext*)instance->context;
+	WINPR_ASSERT(wfc);
+
 	{
-		/* Before connecting, ServerPort is still the primary's port from /v */
-		wfContext* wfcInit = (wfContext*)instance->context;
-		const UINT32 port = freerdp_settings_get_uint32(instance->context->settings, FreeRDP_ServerPort);
-		wfcInit->primaryProbePort = (port > 0) && (port <= UINT16_MAX) ? (UINT16)port : 3389;
+		/* Before connecting, ServerHostname/ServerPort still hold the primary from /v */
+		const rdpSettings* initial = instance->context->settings;
+		const char* host = freerdp_settings_get_string(initial, FreeRDP_ServerHostname);
+		const UINT32 port = freerdp_settings_get_uint32(initial, FreeRDP_ServerPort);
+		wfc->primaryProbeHost = host ? _strdup(host) : nullptr;
+		wfc->primaryProbePort = (port > 0) && (port <= UINT16_MAX) ? (UINT16)port : 3389;
 	}
 
 	if (!freerdp_connect(instance))
@@ -1226,9 +1224,6 @@ static DWORD WINAPI wf_client_thread(LPVOID lpParam)
 
 	rdpContext* context = instance->context;
 	WINPR_ASSERT(context);
-
-	wfContext* wfc = (wfContext*)instance->context;
-	WINPR_ASSERT(wfc);
 
 	rdpChannels* channels = context->channels;
 	WINPR_ASSERT(channels);
@@ -1371,6 +1366,8 @@ static DWORD WINAPI wf_client_thread(LPVOID lpParam)
 	freerdp_disconnect(instance);
 
 end:
+	free(wfc->primaryProbeHost);
+	wfc->primaryProbeHost = nullptr;
 	error = freerdp_get_last_error(instance->context);
 	WLog_DBG(TAG, "Main thread exited with %" PRIu32, error);
 	ExitThread(error);

@@ -297,12 +297,26 @@ static BOOL rdp_client_wait_for_activation(rdpRdp* rdp)
  * Try to connect with automatic fallback to backup server if primary fails
  * This handles initial connection attempts with fallback support
  */
-/**
- * Try to connect with automatic fallback to backup server if primary fails
- * This handles initial connection attempts with fallback support
- */
-static BOOL append_server_to_window_title(rdpSettings* settings)
+static BOOL rdp_fallback_save_primary(rdpRdp* rdp, const char* hostname, UINT32 port)
 {
+	char* copy = _strdup(hostname);
+	if (!copy)
+		return FALSE;
+	free(rdp->fallbackPrimaryHostname);
+	rdp->fallbackPrimaryHostname = copy;
+	rdp->fallbackPrimaryPort = port;
+	return TRUE;
+}
+
+static UINT32 rdp_fallback_get_port(const rdpSettings* settings)
+{
+	const UINT32 port = freerdp_settings_get_uint32(settings, FreeRDP_FallbackServerPort);
+	return port ? port : 3389;
+}
+
+static BOOL append_server_to_window_title(rdpRdp* rdp)
+{
+	rdpSettings* settings = rdp->context->settings;
 	const char* currentTitle = freerdp_settings_get_string(settings, FreeRDP_WindowTitle);
 
 	/* No /title: given, upstream leaves WindowTitle unset */
@@ -326,36 +340,23 @@ static BOOL append_server_to_window_title(rdpSettings* settings)
 
 	const UINT32 currentPort = freerdp_settings_get_uint32(settings, FreeRDP_ServerPort);
 	const char* fallbackServer =
-	    freerdp_settings_get_string(settings, FreeRDP_RedirectionTargetNetBiosName);
-	const char* primaryServer =
-	    freerdp_settings_get_string(settings, FreeRDP_RedirectionTargetFQDN);
+	    freerdp_settings_get_string(settings, FreeRDP_FallbackServerHostname);
+	const char* primaryServer = rdp->fallbackPrimaryHostname;
 
 	char newTitle[512] = { 0 };
 
 	/* Only add Primary/Fallback prefix if fallback is configured */
 	if (fallbackServer && strlen(fallbackServer) > 0)
 	{
-		char* fallbackCopy = _strdup(fallbackServer);
-		if (!fallbackCopy)
-		{
-			free(baseTitle);
-			return FALSE;
-		}
-
-		/* Strip port from fallback address if present */
-		char* colon = strchr(fallbackCopy, ':');
-		if (colon)
-			*colon = '\0';
-
 		BOOL isUsingFallback = FALSE;
 
 		/* Check if we're connected to fallback by comparing with primary */
 		if (primaryServer && strlen(primaryServer) > 0)
-			isUsingFallback = (strcmp(currentServer, primaryServer) != 0);
+			isUsingFallback = (strcmp(currentServer, primaryServer) != 0) ||
+			                  (currentPort != rdp->fallbackPrimaryPort);
 		else
-			isUsingFallback = (strcmp(currentServer, fallbackCopy) == 0);
-
-		free(fallbackCopy);
+			isUsingFallback = (strcmp(currentServer, fallbackServer) == 0) &&
+			                  (currentPort == rdp_fallback_get_port(settings));
 
 		/* Construct title with Primary/Fallback prefix */
 		if (currentPort != 3389)
@@ -400,24 +401,13 @@ BOOL rdp_client_connect_with_fallback(rdpRdp* rdp)
 	WINPR_ASSERT(settings);
 
 	/* Get fallback server from settings */
-	const char* fbServer =
-	    freerdp_settings_get_string(settings, FreeRDP_RedirectionTargetNetBiosName);
+	const char* fbServer = freerdp_settings_get_string(settings, FreeRDP_FallbackServerHostname);
 	if (fbServer && strlen(fbServer) > 0)
 	{
 		fallbackAddress = _strdup(fbServer);
 		if (!fallbackAddress)
 			return FALSE;
-
-		/* Check if port is encoded in the string as "server:port" */
-		char* colon = strchr(fallbackAddress, ':');
-		if (colon)
-		{
-			*colon = '\0';
-			errno = 0;
-			long portVal = strtol(colon + 1, NULL, 10);
-			if (errno == 0 && portVal > 0 && portVal <= 65535)
-				fallbackPort = (UINT32)portVal;
-		}
+		fallbackPort = rdp_fallback_get_port(settings);
 	}
 	/* If no fallback server configured, just do normal connection without fallback */
 	else
@@ -455,8 +445,7 @@ BOOL rdp_client_connect_with_fallback(rdpRdp* rdp)
 		          originalPort);
 
 		/* SAVE THE ORIGINAL PRIMARY SERVER FOR FUTURE RECONNECTIONS */
-		rdp->fallbackPrimaryPort = originalPort;
-		if (!freerdp_settings_set_string(settings, FreeRDP_RedirectionTargetFQDN, originalServer))
+		if (!rdp_fallback_save_primary(rdp, originalServer, originalPort))
 		{
 			free(originalServer);
 			free(fallbackAddress);
@@ -464,7 +453,7 @@ BOOL rdp_client_connect_with_fallback(rdpRdp* rdp)
 		}
 
 		/* APPEND SERVER INFO TO WINDOW TITLE */
-		append_server_to_window_title(settings);
+		append_server_to_window_title(rdp);
 
 		free(originalServer);
 		free(fallbackAddress);
@@ -490,8 +479,7 @@ BOOL rdp_client_connect_with_fallback(rdpRdp* rdp)
 	WLog_INFO(TAG, "Attempting fallback connection to: %s:%" PRIu32, fallbackAddress, fallbackPort);
 
 	/* SAVE THE ORIGINAL PRIMARY SERVER BEFORE SWITCHING TO FALLBACK */
-	rdp->fallbackPrimaryPort = originalPort;
-	if (!freerdp_settings_set_string(settings, FreeRDP_RedirectionTargetFQDN, originalServer))
+	if (!rdp_fallback_save_primary(rdp, originalServer, originalPort))
 	{
 		free(originalServer);
 		free(fallbackAddress);
@@ -561,7 +549,7 @@ BOOL rdp_client_connect_with_fallback(rdpRdp* rdp)
 		}
 
 		/* APPEND SERVER INFO TO WINDOW TITLE */
-		append_server_to_window_title(settings);
+		append_server_to_window_title(rdp);
 	}
 
 	free(originalServer);
@@ -1032,31 +1020,20 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 	WINPR_ASSERT(settings);
 
 	/* Get fallback server from settings */
-	const char* fbServer =
-	    freerdp_settings_get_string(settings, FreeRDP_RedirectionTargetNetBiosName);
+	const char* fbServer = freerdp_settings_get_string(settings, FreeRDP_FallbackServerHostname);
 	if (fbServer && strlen(fbServer) > 0)
 	{
 		fallbackAddress = _strdup(fbServer);
 		if (!fallbackAddress)
 			return FALSE;
-
-		char* colon = strchr(fallbackAddress, ':');
-		if (colon)
-		{
-			*colon = '\0';
-			errno = 0;
-			long portVal = strtol(colon + 1, NULL, 10);
-			if (errno == 0 && portVal > 0 && portVal <= 65535)
-				fallbackPort = (UINT32)portVal;
-		}
+		fallbackPort = rdp_fallback_get_port(settings);
 	}
 
-	/* Retrieve the saved primary server from settings */
-	const char* savedPrimary = freerdp_settings_get_string(settings, FreeRDP_RedirectionTargetFQDN);
-	if (savedPrimary && strlen(savedPrimary) > 0)
+	/* Use the primary saved by rdp_client_connect_with_fallback */
+	if (rdp->fallbackPrimaryHostname && strlen(rdp->fallbackPrimaryHostname) > 0)
 	{
-		primaryServer = _strdup(savedPrimary);
-		primaryPort = rdp->fallbackPrimaryPort ? rdp->fallbackPrimaryPort : 3389;
+		primaryServer = _strdup(rdp->fallbackPrimaryHostname);
+		primaryPort = rdp->fallbackPrimaryPort;
 	}
 	else
 	{
@@ -1121,7 +1098,7 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 				          primaryPort);
 
 				/* UPDATE WINDOW TITLE AFTER SUCCESSFUL RECONNECT */
-				append_server_to_window_title(settings);
+				append_server_to_window_title(rdp);
 
 				/* FORCE FULL WINDOW REFRESH AFTER RECONNECT */
 				rdpContext* context = rdp->context;
@@ -1226,7 +1203,7 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 				          usingPrimary ? "primary" : "fallback", targetServer, targetPort);
 
 				/* UPDATE WINDOW TITLE AFTER SUCCESSFUL RECONNECT */
-				append_server_to_window_title(settings);
+				append_server_to_window_title(rdp);
 
 				/* FORCE FULL WINDOW REFRESH AFTER RECONNECT */
 				rdpContext* context = rdp->context;
