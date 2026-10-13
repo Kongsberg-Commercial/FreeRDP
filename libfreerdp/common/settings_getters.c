@@ -1764,6 +1764,9 @@ UINT32 freerdp_settings_get_uint32(WINPR_ATTR_UNUSED const rdpSettings* settings
 		case FreeRDP_FakeMouseMotionInterval:
 			return settings->FakeMouseMotionInterval;
 
+		case FreeRDP_FallbackServerPort:
+			return settings->FallbackServerPort;
+
 		case FreeRDP_Floatbar:
 			return settings->Floatbar;
 
@@ -2216,6 +2219,10 @@ BOOL freerdp_settings_set_uint32(WINPR_ATTR_UNUSED rdpSettings* settings,
 
 		case FreeRDP_FakeMouseMotionInterval:
 			settings->FakeMouseMotionInterval = cnv.c;
+			break;
+
+		case FreeRDP_FallbackServerPort:
+			settings->FallbackServerPort = cnv.c;
 			break;
 
 		case FreeRDP_Floatbar:
@@ -2846,6 +2853,9 @@ const char* freerdp_settings_get_string(WINPR_ATTR_UNUSED const rdpSettings* set
 		case FreeRDP_EndpointFedAuthToken:
 			return settings->EndpointFedAuthToken;
 
+		case FreeRDP_FallbackServerHostname:
+			return settings->FallbackServerHostname;
+
 		case FreeRDP_GatewayAcceptedCert:
 			return settings->GatewayAcceptedCert;
 
@@ -3189,6 +3199,9 @@ char* freerdp_settings_get_string_writable(rdpSettings* settings, FreeRDP_Settin
 
 		case FreeRDP_EndpointFedAuthToken:
 			return settings->EndpointFedAuthToken;
+
+		case FreeRDP_FallbackServerHostname:
+			return settings->FallbackServerHostname;
 
 		case FreeRDP_GatewayAcceptedCert:
 			return settings->GatewayAcceptedCert;
@@ -3545,6 +3558,9 @@ BOOL freerdp_settings_set_string_(WINPR_ATTR_UNUSED rdpSettings* settings,
 
 		case FreeRDP_EndpointFedAuthToken:
 			return update_string_(&settings->EndpointFedAuthToken, cnv.c, len);
+
+		case FreeRDP_FallbackServerHostname:
+			return update_string_(&settings->FallbackServerHostname, cnv.c, len);
 
 		case FreeRDP_GatewayAcceptedCert:
 			return update_string_(&settings->GatewayAcceptedCert, cnv.c, len);
@@ -3916,6 +3932,9 @@ BOOL freerdp_settings_set_string_copy_(WINPR_ATTR_UNUSED rdpSettings* settings,
 
 		case FreeRDP_EndpointFedAuthToken:
 			return update_string_copy_(&settings->EndpointFedAuthToken, cnv.cc, len, cleanup);
+
+		case FreeRDP_FallbackServerHostname:
+			return update_string_copy_(&settings->FallbackServerHostname, cnv.cc, len, cleanup);
 
 		case FreeRDP_GatewayAcceptedCert:
 			return update_string_copy_(&settings->GatewayAcceptedCert, cnv.cc, len, cleanup);

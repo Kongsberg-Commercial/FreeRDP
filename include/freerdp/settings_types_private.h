@@ -237,7 +237,9 @@ struct rdp_settings
 	SETTINGS_DEPRECATED(ALIGN64 BOOL SessionHasBeenReconnected);                   /** 838
 		                                                                            * @since version 3.26.0
 		                                                                            */
-	UINT64 padding0896[896 - 839];                                                 /* 839 */
+	SETTINGS_DEPRECATED(ALIGN64 char* FallbackServerHostname);                     /* 839 */
+	SETTINGS_DEPRECATED(ALIGN64 UINT32 FallbackServerPort);                        /* 840 */
+	UINT64 padding0896[896 - 841];                                                 /* 841 */
 
 	/* Client Info (Time Zone) */
 	SETTINGS_DEPRECATED(ALIGN64 TIME_ZONE_INFORMATION* ClientTimeZone); /* 896 */
