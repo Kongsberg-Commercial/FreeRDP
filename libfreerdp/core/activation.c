@@ -367,20 +367,12 @@ BOOL rdp_send_client_persistent_key_list_pdu(rdpRdp* rdp)
 	if (keyCount > keyMaxFrag)
 		keyCount = keyMaxFrag;
 
-	WINPR_ASSERT(settings->BitmapCacheV2CellInfo[0].numEntries <= UINT16_MAX);
-	info.totalEntriesCache0 = (UINT16)settings->BitmapCacheV2CellInfo[0].numEntries;
-
-	WINPR_ASSERT(settings->BitmapCacheV2CellInfo[1].numEntries <= UINT16_MAX);
-	info.totalEntriesCache1 = (UINT16)settings->BitmapCacheV2CellInfo[1].numEntries;
-
-	WINPR_ASSERT(settings->BitmapCacheV2CellInfo[2].numEntries <= UINT16_MAX);
-	info.totalEntriesCache2 = (UINT16)settings->BitmapCacheV2CellInfo[2].numEntries;
-
-	WINPR_ASSERT(settings->BitmapCacheV2CellInfo[3].numEntries <= UINT16_MAX);
-	info.totalEntriesCache3 = (UINT16)settings->BitmapCacheV2CellInfo[3].numEntries;
-
-	WINPR_ASSERT(settings->BitmapCacheV2CellInfo[4].numEntries <= UINT16_MAX);
-	info.totalEntriesCache4 = (UINT16)settings->BitmapCacheV2CellInfo[4].numEntries;
+	/* Default cell 2 has 65536 entries; the PDU field is 16 bit and gets reduced to keyCount below */
+	info.totalEntriesCache0 = (UINT16)MIN(settings->BitmapCacheV2CellInfo[0].numEntries, UINT16_MAX);
+	info.totalEntriesCache1 = (UINT16)MIN(settings->BitmapCacheV2CellInfo[1].numEntries, UINT16_MAX);
+	info.totalEntriesCache2 = (UINT16)MIN(settings->BitmapCacheV2CellInfo[2].numEntries, UINT16_MAX);
+	info.totalEntriesCache3 = (UINT16)MIN(settings->BitmapCacheV2CellInfo[3].numEntries, UINT16_MAX);
+	info.totalEntriesCache4 = (UINT16)MIN(settings->BitmapCacheV2CellInfo[4].numEntries, UINT16_MAX);
 
 	info.numEntriesCache0 = MIN(keyCount, info.totalEntriesCache0);
 	keyCount -= info.numEntriesCache0;
