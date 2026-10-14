@@ -103,6 +103,11 @@ LRESULT CALLBACK wf_ll_kbd_proc(int nCode, WPARAM wParam, LPARAM lParam)
 		g_focus_hWnd = g_main_hWnd;
 	}
 
+	/* Activation is per thread: a window can get WM_ACTIVATE without becoming foreground */
+	if (g_focus_hWnd && !g_parent_hWnd &&
+	    (GetForegroundWindow() != GetAncestor(g_focus_hWnd, GA_ROOT)))
+		return CallNextHookEx(nullptr, nCode, wParam, lParam);
+
 	if (g_focus_hWnd && (nCode == HC_ACTION))
 	{
 		switch (wParam)
