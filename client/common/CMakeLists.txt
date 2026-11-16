@@ -27,6 +27,7 @@ set(SRCS
     cmdline.c
     cmdline.h
     file.c
+    fallback.c
     client_cliprdr_file.c
     geometry.c
     smartcard_cli.c
