@@ -271,6 +271,22 @@ SSIZE_T sdl_retry_dialog(freerdp* instance, const char* what, size_t current,
 		return -1;
 	}
 
+	/* Before the first connection succeeded there is no session image to draw a banner on */
+	if ((strcmp(what, "connection") == 0) && sdl->isConnected())
+	{
+		const BOOL switching = sdl->fallbackSwitching() ? TRUE : FALSE;
+		char* text = freerdp_client_fallback_reconnect_text(instance->context, switching, current);
+		char* title =
+		    freerdp_client_fallback_reconnect_title(instance->context, switching, current);
+		sdl->setReconnectState(text ? text : "", title ? title : "");
+		free(text);
+		free(title);
+		WLog_Print(sdl->getWLog(), WLOG_INFO,
+		           "[%s] retry %" PRIuz "/%" PRIuz ", delaying %" PRIuz "ms before next attempt",
+		           what, current + 1, max, delay);
+		return WINPR_ASSERTING_INT_CAST(ssize_t, delay);
+	}
+
 	sdl->getDialog().showInfo("[%s] retry %" PRIuz "/%" PRIuz ", delaying %" PRIuz
 	                          "ms before next attempt",
 	                          what, current + 1, max, delay);

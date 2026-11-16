@@ -17,9 +17,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <algorithm>
 #include <limits>
 #include <sstream>
 #include <cmath>
+#include <tuple>
 
 #include "sdl_window.hpp"
 #include "sdl_utils.hpp"
@@ -584,7 +586,43 @@ bool SdlWindow::blit(SDL_Surface* surface, const SDL_Rect& srcRect, SDL_Rect& ds
 	return true;
 }
 
-void SdlWindow::updateSurface()
+void SdlWindow::drawBanner(const std::string& banner)
+{
+	int w = 0;
+	int h = 0;
+	if (!SDL_GetCurrentRenderOutputSize(_renderer, &w, &h) || (w <= 0) || (h <= 0))
+		return;
+
+	float oldScaleX = 1.0F;
+	float oldScaleY = 1.0F;
+	std::ignore = SDL_GetRenderScale(_renderer, &oldScaleX, &oldScaleY);
+	std::ignore = SDL_SetRenderScale(_renderer, 1.0F, 1.0F);
+
+	/* SDL debug font glyphs are 8x8 pixels, scale them up to ~24 pixels while they fit */
+	const auto glyph = static_cast<float>(SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE);
+	const auto textLen = static_cast<float>(banner.size());
+	float textScale = 3.0F;
+	while ((textScale > 1.0F) && (textLen * glyph * textScale > static_cast<float>(w) - 16.0F))
+		textScale -= 0.5F;
+
+	const float bannerHeight = std::min(80.0F, static_cast<float>(h));
+	const SDL_FRect band = { 0.0F, (static_cast<float>(h) - bannerHeight) / 2.0F,
+		                     static_cast<float>(w), bannerHeight };
+	std::ignore = SDL_SetRenderDrawBlendMode(_renderer, SDL_BLENDMODE_NONE);
+	std::ignore = SDL_SetRenderDrawColor(_renderer, 0x00, 0x00, 0x00, 0xFF);
+	std::ignore = SDL_RenderFillRect(_renderer, &band);
+
+	std::ignore = SDL_SetRenderScale(_renderer, textScale, textScale);
+	const float textW = textLen * glyph * textScale;
+	const float x = std::max(8.0F, (static_cast<float>(w) - textW) / 2.0F) / textScale;
+	const float y = (band.y + ((bannerHeight - (glyph * textScale)) / 2.0F)) / textScale;
+	std::ignore = SDL_SetRenderDrawColor(_renderer, 0xFF, 0xFF, 0xFF, 0xFF);
+	std::ignore = SDL_RenderDebugText(_renderer, x, y, banner.c_str());
+
+	std::ignore = SDL_SetRenderScale(_renderer, oldScaleX, oldScaleY);
+}
+
+void SdlWindow::updateSurface(const std::string& banner)
 {
 	if (!_renderer)
 		return;
@@ -596,6 +634,8 @@ void SdlWindow::updateSurface()
 		return;
 	if (!SDL_RenderTexture(_renderer, _renderTarget, nullptr, nullptr))
 		return;
+	if (!banner.empty())
+		drawBanner(banner);
 	if (!SDL_RenderPresent(_renderer))
 		return;
 }

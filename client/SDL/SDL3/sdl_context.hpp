@@ -28,6 +28,7 @@
 #include <atomic>
 
 #include <freerdp/freerdp.h>
+#include <freerdp/client/fallback.h>
 
 #include <SDL3/SDL.h>
 
@@ -159,6 +160,12 @@ class SdlContext
 	[[nodiscard]] bool credentialsRead() const;
 	void setCredentialsRead();
 
+	/* Reconnect banner and title, callable from the RDP thread */
+	void setReconnectState(const std::string& banner, const std::string& title);
+	void clearReconnectState();
+	[[nodiscard]] bool applyReconnectState();
+	[[nodiscard]] bool fallbackSwitching() const;
+
   private:
 	[[nodiscard]] bool resizeToScale(SdlWindow* window);
 	[[nodiscard]] bool useLocalScale() const;
@@ -251,4 +258,9 @@ class SdlContext
 	std::vector<COMMAND_LINE_ARGUMENT_A> _args;
 	std::vector<rdpPointer*> _valid_pointers;
 	bool _credentialsRead = false;
+
+	rdpClientFallbackMonitor* _fallbackMonitor = nullptr;
+	bool _fallbackSwitchBack = false;
+	std::string _reconnectBanner;
+	std::string _reconnectTitle;
 };

@@ -92,7 +92,8 @@ class SdlWindow
 	bool paintResizeFrame(SDL_Surface* surface, SDL_Point off, bool contentChanged,
 	                      const SDL_Rect& inset = { 0, 0, 0, 0 }, bool fillRevealed = true,
 	                      bool dashedBorder = true);
-	void updateSurface();
+	/* banner: reconnect message drawn over the last session image, empty for none */
+	void updateSurface(const std::string& banner = {});
 
   protected:
 	SdlWindow(SDL_DisplayID id, const std::string& title, const SDL_Rect& rect, Uint32 flags);
@@ -120,6 +121,7 @@ class SdlWindow
   private:
 	void ensureRenderTarget();
 	bool ensureGdiTexture(SDL_Surface* surface);
+	void drawBanner(const std::string& banner);
 
 	SDL_Window* _window = nullptr;
 	SDL_Renderer* _renderer = nullptr;

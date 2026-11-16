@@ -63,6 +63,10 @@ SdlContext::SdlContext(rdpContext* context)
 
 	_args.push_back({ sdl_allow_screensaver, COMMAND_LINE_VALUE_BOOL, nullptr, BoolValueFalse,
 	                  nullptr, -1, nullptr, "Allow local screensaver to activate" });
+	_args.push_back({ FREERDP_CLIENT_FALLBACK_SWITCHBACK_ARG, COMMAND_LINE_VALUE_BOOL, nullptr,
+	                  BoolValueFalse, nullptr, -1, nullptr,
+	                  "automatic switch back to the primary server when it is reachable again "
+	                  "(needs /fallback-server and /auto-reconnect)" });
 
 	/* Push a null element used as abort when iterating the array */
 	_args.push_back({ nullptr, 0, nullptr, nullptr, nullptr, -1, nullptr, nullptr });
@@ -603,6 +607,10 @@ int SdlContext::sdl_client_thread_connect(std::string& error_msg)
 	WINPR_ASSERT(instance);
 
 	_rdpThreadRunning = true;
+
+	/* Before connecting, ServerHostname/ServerPort still hold the primary from /v */
+	_fallbackMonitor = freerdp_client_fallback_monitor_new(context(), _fallbackSwitchBack);
+
 	BOOL rc = freerdp_connect(instance);
 
 	rdpSettings* settings = context()->settings;
@@ -670,6 +678,7 @@ int SdlContext::sdl_client_thread_run(std::string& error_msg)
 	WINPR_ASSERT(instance);
 
 	int exit_code = sdl::error::SUCCESS;
+	freerdp_client_fallback_monitor_update(_fallbackMonitor);
 	while (!freerdp_shall_disconnect_context(context()))
 	{
 		HANDLE handles[MAXIMUM_WAIT_OBJECTS] = {};
@@ -690,12 +699,18 @@ int SdlContext::sdl_client_thread_run(std::string& error_msg)
 				break;
 		}
 
-		const DWORD nCount = freerdp_get_event_handles(context(), handles, ARRAYSIZE(handles));
+		DWORD nCount = freerdp_get_event_handles(context(), handles, ARRAYSIZE(handles) - 1);
 
 		if (nCount == 0)
 		{
 			WLog_Print(getWLog(), WLOG_ERROR, "freerdp_get_event_handles failed");
 			break;
+		}
+
+		{
+			HANDLE primaryAvailable = freerdp_client_fallback_monitor_event(_fallbackMonitor);
+			if (primaryAvailable)
+				handles[nCount++] = primaryAvailable;
 		}
 
 		const DWORD status = WaitForMultipleObjects(nCount, handles, FALSE, INFINITE);
@@ -706,12 +721,28 @@ int SdlContext::sdl_client_thread_run(std::string& error_msg)
 			break;
 		}
 
+		if (freerdp_client_fallback_monitor_primary_available(_fallbackMonitor))
+		{
+			const BOOL switched =
+			    freerdp_client_fallback_monitor_switch(_fallbackMonitor, instance, nullptr);
+			clearReconnectState();
+			if (!switched)
+			{
+				if (freerdp_error_info(instance) == 0)
+					exit_code = sdl::error::CONN_FAILED;
+				break;
+			}
+			continue;
+		}
+
 		if (!freerdp_check_event_handles(context()))
 		{
 			if (client_auto_reconnect(instance))
 			{
 				// Retry was successful, discard dialog
 				getDialog().show(false);
+				clearReconnectState();
+				freerdp_client_fallback_monitor_update(_fallbackMonitor);
 				continue;
 			}
 			else
@@ -780,6 +811,8 @@ DWORD SdlContext::rdpThreadRun(SdlContext* sdl)
 	int exit_code = sdl->sdl_client_thread_connect(error_msg);
 	if (exit_code == sdl::error::SUCCESS)
 		exit_code = sdl->sdl_client_thread_run(error_msg);
+	freerdp_client_fallback_monitor_free(sdl->_fallbackMonitor);
+	sdl->_fallbackMonitor = nullptr;
 	sdl->sdl_client_cleanup(exit_code, error_msg);
 
 	return static_cast<DWORD>(exit_code);
@@ -947,7 +980,7 @@ bool SdlContext::drawToWindow(SdlWindow& window, const std::vector<SDL_Rect>& re
 			return false;
 	}
 
-	window.updateSurface();
+	window.updateSurface(_reconnectBanner);
 	return true;
 }
 
@@ -1573,6 +1606,9 @@ int SdlContext::argumentHandler(const COMMAND_LINE_ARGUMENT_A* arg, void* custom
 
 	if (arg->Name)
 	{
+		if (strcmp(arg->Name, FREERDP_CLIENT_FALLBACK_SWITCHBACK_ARG) == 0)
+			sdl->_fallbackSwitchBack = (arg->Value != BoolValueFalse);
+
 		if (strcmp(arg->Name, sdl_allow_screensaver) == 0)
 		{
 			if (arg->Value != nullptr)
@@ -1618,6 +1654,51 @@ bool SdlContext::credentialsRead() const
 void SdlContext::setCredentialsRead()
 {
 	_credentialsRead = true;
+}
+
+void SdlContext::setReconnectState(const std::string& banner, const std::string& title)
+{
+	{
+		std::unique_lock lock(_critical);
+		_reconnectBanner = banner;
+		_reconnectTitle = title;
+	}
+	std::ignore = sdl_push_user_event(SDL_EVENT_USER_RECONNECT_STATE);
+}
+
+void SdlContext::clearReconnectState()
+{
+	/* The core updates the title to the server the session ended up on */
+	const char* title = freerdp_settings_get_string(context()->settings, FreeRDP_WindowTitle);
+	{
+		std::unique_lock lock(_critical);
+		if (_reconnectBanner.empty())
+			return;
+		_reconnectBanner.clear();
+		_reconnectTitle = title ? title : windowTitle();
+	}
+	std::ignore = sdl_push_user_event(SDL_EVENT_USER_RECONNECT_STATE);
+}
+
+/* Runs on the SDL main thread: windows may only be changed from there */
+bool SdlContext::applyReconnectState()
+{
+	if (_rail.enabled())
+		return true;
+
+	std::unique_lock lock(_critical);
+	for (auto& window : _windows)
+	{
+		if (!_reconnectTitle.empty())
+			std::ignore = SDL_SetWindowTitle(window.second.window(), _reconnectTitle.c_str());
+		window.second.updateSurface(_reconnectBanner);
+	}
+	return true;
+}
+
+bool SdlContext::fallbackSwitching() const
+{
+	return freerdp_client_fallback_monitor_is_switching(_fallbackMonitor);
 }
 
 bool SdlContext::resizeToScale(SdlWindow* window)
