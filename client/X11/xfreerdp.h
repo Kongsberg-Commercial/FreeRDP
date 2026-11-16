@@ -59,6 +59,7 @@
 #include <freerdp/codec/region.h>
 #include <freerdp/locale/keyboard.h>
 #include <freerdp/client.h>
+#include <freerdp/client/fallback.h>
 
 #if !defined(XcursorUInt)
 typedef unsigned int XcursorUInt;
@@ -168,8 +169,10 @@ struct xf_context
 	BOOL debug;
 	HANDLE x11event;
 	xfWindow* window;
-	Window reconnectWindow;
-	char reconnectMessage[128];
+	BOOL reconnectBanner;
+	char reconnectMessage[256];
+	rdpClientFallbackMonitor* fallbackMonitor;
+	BOOL fallbackSwitchBack;
 	xfAppWindow* appWindow;
 	xfPointer* pointer;
 	xfWorkArea workArea;

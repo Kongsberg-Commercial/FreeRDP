@@ -1592,6 +1592,14 @@ static DWORD WINAPI xf_client_thread(LPVOID param)
 	freerdp* instance = (freerdp*)param;
 	WINPR_ASSERT(instance);
 
+	{
+		/* Before connecting, ServerHostname/ServerPort still hold the primary from /v */
+		xfContext* pre = (xfContext*)instance->context;
+		WINPR_ASSERT(pre);
+		pre->fallbackMonitor =
+		    freerdp_client_fallback_monitor_new(instance->context, pre->fallbackSwitchBack);
+	}
+
 	const BOOL status = freerdp_connect(instance);
 	rdpContext* context = instance->context;
 	WINPR_ASSERT(context);
@@ -1633,12 +1641,19 @@ static DWORD WINAPI xf_client_thread(LPVOID param)
 	}
 
 	inputEvent = xfc->x11event;
+	freerdp_client_fallback_monitor_update(xfc->fallbackMonitor);
 
 	while (!freerdp_shall_disconnect_context(instance->context))
 	{
 		HANDLE handles[MAXIMUM_WAIT_OBJECTS] = WINPR_C_ARRAY_INIT;
 		DWORD nCount = 0;
 		handles[nCount++] = inputEvent;
+
+		{
+			HANDLE primaryAvailable = freerdp_client_fallback_monitor_event(xfc->fallbackMonitor);
+			if (primaryAvailable)
+				handles[nCount++] = primaryAvailable;
+		}
 
 		/*
 		 * win8 and server 2k12 seem to have some timing issue/race condition
@@ -1672,13 +1687,31 @@ static DWORD WINAPI xf_client_thread(LPVOID param)
 		if (waitStatus == WAIT_FAILED)
 			break;
 
+		if (freerdp_client_fallback_monitor_primary_available(xfc->fallbackMonitor))
+		{
+			const BOOL switched = freerdp_client_fallback_monitor_switch(
+			    xfc->fallbackMonitor, instance, handle_window_events);
+			xf_reconnect_close(xfc);
+			if (!switched)
+			{
+				if (freerdp_error_info(instance) == 0)
+					exit_code = (uint32_t)xf_map_error_to_exit_code(
+					    freerdp_get_last_error(instance->context));
+				break;
+			}
+			continue;
+		}
+
 		{
 			if (!freerdp_check_event_handles(context))
 			{
 				const BOOL reconnected = client_auto_reconnect_ex(instance, handle_window_events);
 				xf_reconnect_close(xfc);
 				if (reconnected)
+				{
+					freerdp_client_fallback_monitor_update(xfc->fallbackMonitor);
 					continue;
+				}
 				else
 				{
 					/*
@@ -1718,8 +1751,11 @@ static DWORD WINAPI xf_client_thread(LPVOID param)
 
 disconnect:
 
+	freerdp_client_fallback_monitor_stop(xfc->fallbackMonitor);
 	freerdp_disconnect(instance);
 end:
+	freerdp_client_fallback_monitor_free(xfc->fallbackMonitor);
+	xfc->fallbackMonitor = nullptr;
 	ExitThread(exit_code);
 	return exit_code;
 }

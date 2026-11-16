@@ -88,6 +88,7 @@ WINPR_ATTR_MALLOC(xf_DestroyDesktopWindow, 2)
 xfWindow* xf_CreateDesktopWindow(xfContext* xfc, char* name, int width, int height);
 
 void xf_ResizeDesktopWindow(xfContext* xfc, xfWindow* window, int width, int height);
+void xf_SetDesktopWindowTitle(xfContext* xfc, const char* name);
 
 Window xf_CreateDummyWindow(xfContext* xfc);
 void xf_DestroyDummyWindow(xfContext* xfc, Window window);

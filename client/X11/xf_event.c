@@ -1275,8 +1275,6 @@ BOOL xf_event_process(freerdp* instance, const XEvent* event)
 
 	xfContext* xfc = (xfContext*)instance->context;
 	WINPR_ASSERT(xfc);
-	if (!xf_reconnect_event(xfc, event))
-		return FALSE;
 
 	rdpSettings* settings = xfc->common.context.settings;
 	WINPR_ASSERT(settings);
@@ -1513,10 +1511,13 @@ BOOL xf_event_update_screen(freerdp* instance)
 			                WINPR_ASSERTING_INT_CAST(uint32_t, xfc->exposedArea.y),
 			                WINPR_ASSERTING_INT_CAST(uint32_t, xfc->exposedArea.w),
 			                WINPR_ASSERTING_INT_CAST(uint32_t, xfc->exposedArea.h));
-			return TRUE;
 		}
-		xf_draw_screen(xfc, xfc->exposedArea.x, xfc->exposedArea.y, xfc->exposedArea.w,
-		               xfc->exposedArea.h);
+		else
+			xf_draw_screen(xfc, xfc->exposedArea.x, xfc->exposedArea.y, xfc->exposedArea.w,
+			               xfc->exposedArea.h);
+
+		/* The repaint above covers the reconnect banner */
+		xf_reconnect_redraw(xfc);
 	}
 	else
 	{

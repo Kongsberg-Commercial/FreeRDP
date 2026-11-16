@@ -226,6 +226,16 @@ static void xf_SetWindowTitleText(xfContext* xfc, Window window, const char* nam
 	                         (const unsigned char*)name, (int)i);
 }
 
+void xf_SetDesktopWindowTitle(xfContext* xfc, const char* name)
+{
+	WINPR_ASSERT(xfc);
+
+	if (!name || !xfc->display || !xfc->window || !xfc->window->handle)
+		return;
+
+	xf_SetWindowTitleText(xfc, xfc->window->handle, name);
+}
+
 /**
  * Post an event from the client to the X server
  */

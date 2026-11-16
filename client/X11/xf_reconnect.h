@@ -20,6 +20,6 @@
 #include "xfreerdp.h"
 WINPR_ATTR_NODISCARD SSIZE_T xf_retry_dialog(freerdp* instance, const char* what, size_t current,
                                              void* userarg);
-WINPR_ATTR_NODISCARD BOOL xf_reconnect_event(xfContext* xfc, const XEvent* event);
+void xf_reconnect_redraw(xfContext* xfc);
 void xf_reconnect_close(xfContext* xfc);
 #endif
