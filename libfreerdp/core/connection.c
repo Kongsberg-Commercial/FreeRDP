@@ -488,8 +488,8 @@ BOOL rdp_client_connect_with_fallback(rdpRdp* rdp)
 	}
 
 	/* Clean up the failed connection attempt */
-	if (rdp->nego)
-		nego_disconnect(rdp->nego);
+	if (rdp->nego && !nego_disconnect(rdp->nego))
+		WLog_WARN(TAG, "Failed to clean up negotiation of the failed primary connection");
 
 	if (rdp->transport)
 		transport_disconnect(rdp->transport);
@@ -527,8 +527,9 @@ BOOL rdp_client_connect_with_fallback(rdpRdp* rdp)
 		WLog_ERR(TAG, "Fallback server connection also failed: %s:%" PRIu32, fallbackAddress,
 		         fallbackPort);
 		/* Restore original settings */
-		freerdp_settings_set_string(settings, FreeRDP_ServerHostname, originalServer);
-		freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, originalPort);
+		if (!freerdp_settings_set_string(settings, FreeRDP_ServerHostname, originalServer) ||
+		    !freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, originalPort))
+			WLog_WARN(TAG, "Failed to restore primary server settings");
 	}
 	else
 	{
