@@ -207,6 +207,12 @@ struct xf_context
 	BOOL mouse_active;
 	BOOL fullscreen_toggle;
 	BOOL KeyboardState[256];
+	BOOL deferAlt;
+	struct
+	{
+		UINT32 pending;
+		UINT32 sent;
+	} deferredAlt;
 	XModifierKeymap* modifierMap;
 	wArrayList* keyCombinations;
 	wArrayList* xevents;
@@ -295,9 +301,14 @@ struct xf_context
 	RailClientContext* rail;
 	wHashTable* railWindows;
 	xfRailIconCache* railIconCache;
+	/* gdi's DeleteSurface, wrapped with software GDI to detach RemoteApp windows */
+	pcRdpgfxDeleteSurface gdiDeleteSurface;
 
 #if defined(WITH_VERBOSE_WINPR_ASSERT)
 	BOOL isRailWindowsLocked;
+	const char* whereFkt;
+	const char* whereFile;
+	size_t whereLine;
 #endif
 
 	BOOL xkbAvailable;
@@ -323,7 +334,6 @@ struct xf_context
 #endif
 	BOOL xi_rawevent;
 	BOOL xi_event;
-	HANDLE pipethread;
 	wLog* log;
 	FREERDP_REMAP_TABLE* remap_table;
 	DWORD X11_KEYCODE_TO_VIRTUAL_SCANCODE[256];
@@ -427,6 +437,6 @@ void xf_draw_screen_(xfContext* xfc, int x, int y, int w, int h, const char* fkt
 
 BOOL xf_keyboard_update_modifier_map(xfContext* xfc);
 
-int xf_exit_code_from_disconnect_reason(DWORD reason);
+FREERDP_API int xf_exit_code_from_disconnect_reason(DWORD reason);
 
 #endif /* FREERDP_CLIENT_X11_FREERDP_H */

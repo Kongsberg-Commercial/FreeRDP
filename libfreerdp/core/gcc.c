@@ -228,6 +228,10 @@ static DWORD rdp_version_common(wLog* log, DWORD serverVersion, DWORD clientVers
 		case RDP_VERSION_10_10:
 		case RDP_VERSION_10_11:
 		case RDP_VERSION_10_12:
+			WLog_Print(log, WLOG_DEBUG, "Using RDP version %s, Server %s, client %s",
+			           freerdp_rdp_version_string(version),
+			           freerdp_rdp_version_string(serverVersion),
+			           freerdp_rdp_version_string(clientVersion));
 			return version;
 
 		default:
@@ -1909,6 +1913,20 @@ BOOL gcc_read_client_network_data(wStream* s, rdpMcs* mcs)
 			    mcs->log, WLOG_ERROR,
 			    "protocol violation: received a static channel name with missing null-termination");
 			return FALSE;
+		}
+
+		/* The name must uniquely identify the channel: the server side looks static channels up
+		 * by name (case insensitive, see wts_get_joined_channel_by_name) */
+		for (UINT32 j = 0; j < i; j++)
+		{
+			const rdpMcsChannel* other = &mcs->channels[j];
+			if (_strnicmp(other->Name, channel->Name, CHANNEL_NAME_LEN + 1) == 0)
+			{
+				WLog_Print(mcs->log, WLOG_ERROR,
+				           "protocol violation: received duplicate static channel name '%s'",
+				           channel->Name);
+				return FALSE;
+			}
 		}
 
 		Stream_Read_UINT32(s, channel->options); /* options (4 bytes) */

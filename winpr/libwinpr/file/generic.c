@@ -538,7 +538,7 @@ BOOL WINAPI GetFileAttributesExW(LPCWSTR lpFileName, GET_FILEEX_INFO_LEVELS fInf
 DWORD WINAPI GetFileAttributesA(LPCSTR lpFileName)
 {
 	struct stat fileStat = WINPR_C_ARRAY_INIT;
-	if (stat(lpFileName, &fileStat) != 0)
+	if (lstat(lpFileName, &fileStat) != 0)
 		return INVALID_FILE_ATTRIBUTES;
 
 	return FileAttributesFromStat(lpFileName, &fileStat);
@@ -661,6 +661,20 @@ BOOL SetFileAttributesA(LPCSTR lpFileName, DWORD dwFileAttributes)
 
 	if (fchmod(fd, st.st_mode) != 0)
 		goto fail;
+
+#ifdef UF_HIDDEN
+	if (dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)
+	{
+		st.st_flags |= UF_HIDDEN;
+	}
+	else
+	{
+		st.st_flags &= ~UF_HIDDEN;
+	}
+	if (fchflags(fd, st.st_flags) != 0)
+		if (errno != ENOTSUP && errno != EOPNOTSUPP && errno != EINVAL && errno != ENOTTY)
+			goto fail;
+#endif
 
 	rc = TRUE;
 fail:
@@ -1146,8 +1160,16 @@ static DWORD FileAttributesFromStat(const char* path, const struct stat* fileSta
 			dwFileAttributes |= FILE_ATTRIBUTE_HIDDEN;
 	}
 
+#ifdef UF_HIDDEN
+	if (fileStat->st_flags & UF_HIDDEN)
+		dwFileAttributes |= FILE_ATTRIBUTE_HIDDEN;
+#endif
+
 	if (!(fileStat->st_mode & S_IWUSR))
 		dwFileAttributes |= FILE_ATTRIBUTE_READONLY;
+
+	if (S_ISLNK(fileStat->st_mode))
+		dwFileAttributes |= FILE_ATTRIBUTE_REPARSE_POINT;
 
 	return dwFileAttributes;
 }

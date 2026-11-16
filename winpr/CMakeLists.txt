@@ -124,6 +124,16 @@ option(WINPR_USE_VENDOR_PRODUCT_CONFIG_DIR
        "use a configuration <base>/<product>/<vendor>/ subdirectory instead of </base>/winpr" OFF
 )
 
+set(WINPR_THREAD_DEFAULT_STACK_SIZE "8388608"
+    CACHE STRING
+          "Least stack size in bytes of a thread created with the default size (POSIX), 0 for the platform default"
+)
+if(NOT WINPR_THREAD_DEFAULT_STACK_SIZE MATCHES "^[0-9]+$")
+  message(
+    FATAL_ERROR "WINPR_THREAD_DEFAULT_STACK_SIZE must be a number of bytes, not '${WINPR_THREAD_DEFAULT_STACK_SIZE}'"
+  )
+endif()
+
 # This option MUST be off to avoid symbol conflicts when loading an external SSPI module library
 option(SSPI_DLL "Define and export SSPI API symbols for usage as a Windows SSPI DLL replacement" OFF)
 
@@ -222,7 +232,11 @@ set(WINPR_HAVE_SSIZE_T ${HAVE_SSIZE_T})
 set(WINPR_HAVE_WIN_SSIZE_T ${HAVE_WIN_SSIZE_T})
 
 if(APPLE)
-  set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -Werror=unguarded-availability-new")
+  include(CheckCCompilerFlag)
+  check_c_compiler_flag("-Werror=unguarded-availability-new" C_FLAG)
+  if(C_FLAG)
+    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -Werror=unguarded-availability-new")
+  endif()
 endif()
 
 if(CMAKE_VERSION VERSION_LESS "3.19")
@@ -268,9 +282,11 @@ else()
     ]]
     WINPR_HAVE_STRNSTR
   )
-  check_source_compiles(
-    C
-    [[
+
+  if(NOT MINGW)
+    check_source_compiles(
+      C
+      [[
     #include <string.h>
 
     int main(void) {
@@ -278,8 +294,9 @@ else()
     return 0;
     }
     ]]
-    WINPR_HAVE_STRNDUP
-  )
+      WINPR_HAVE_STRNDUP
+    )
+  endif()
 
   # pipe2()/accept4() are GNU/BSD extensions; glibc only declares them when _GNU_SOURCE is visible,
   # which this project does not set globally (see cmake/PlatformDefaults.cmake) - request it just
@@ -491,8 +508,9 @@ if(WITH_WINPR_TOOLS)
   add_subdirectory(tools)
 endif()
 
-if(BUILD_TESTING_INTERNAL OR BUILD_TESTING)
+if(BUILD_TESTING)
   add_subdirectory(test)
+  add_subdirectory(test-header)
 endif()
 
 set(WINPR_BUILD_CONFIG_DEBUG_FILTER

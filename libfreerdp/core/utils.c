@@ -614,22 +614,41 @@ const char* guid2str(const GUID* guid, char* buffer, size_t len)
 WINPR_ATTR_NODISCARD
 static BOOL isValidIPv4(const char* ipAddress)
 {
+	if (!ipAddress)
+		return FALSE;
+	const size_t len = strnlen(ipAddress, INET_ADDRSTRLEN + 1);
+	if (len > INET_ADDRSTRLEN)
+		return FALSE;
+
 	struct sockaddr_in sa = WINPR_C_ARRAY_INIT;
 	int result = inet_pton(AF_INET, ipAddress, &(sa.sin_addr));
 	return result != 0;
 }
 
-WINPR_ATTR_NODISCARD
-static BOOL isValidIPv6(const char* ipAddress)
+BOOL utils_is_valid_ipV6(const char* ipAddress)
 {
+	if (!ipAddress)
+		return FALSE;
+	const size_t len = strnlen(ipAddress, INET6_ADDRSTRLEN + 1);
+	if (len > INET6_ADDRSTRLEN)
+		return FALSE;
 	struct sockaddr_in6 sa = WINPR_C_ARRAY_INIT;
 	int result = inet_pton(AF_INET6, ipAddress, &(sa.sin6_addr));
 	return result != 0;
 }
 
+BOOL utils_is_valid_ipV6N(const char* ipAddress, size_t len)
+{
+	if (!ipAddress || (len == 0))
+		return FALSE;
+	if (strnlen(ipAddress, len) > INET6_ADDRSTRLEN)
+		return FALSE;
+	return utils_is_valid_ipV6(ipAddress);
+}
+
 BOOL utils_is_valid_ip(const char* ipAddress)
 {
-	return isValidIPv4(ipAddress) || isValidIPv6(ipAddress);
+	return isValidIPv4(ipAddress) || utils_is_valid_ipV6(ipAddress);
 }
 
 BOOL utils_set_umask(void)
@@ -658,19 +677,28 @@ BOOL utils_compare_ip_strings(const char* ipAddressA, size_t lenA, const char* i
 		struct sockaddr_in sb = WINPR_C_ARRAY_INIT;
 		const int resultA = inet_pton(AF_INET, ipAddressA, &(sa.sin_addr));
 		const int resultB = inet_pton(AF_INET, ipAddressB, &(sb.sin_addr));
-		if ((resultA != resultB) || (resultA != 0))
+		if ((resultA != resultB) || (resultA != 1))
 			return FALSE;
 		return memcmp(&sa, &sb, sizeof(sa)) == 0;
 	}
-	if (isValidIPv6(ipAddressA) && isValidIPv6(ipAddressB))
+	if (utils_is_valid_ipV6(ipAddressA) && utils_is_valid_ipV6(ipAddressB))
 	{
 		struct sockaddr_in6 sa = WINPR_C_ARRAY_INIT;
 		struct sockaddr_in6 sb = WINPR_C_ARRAY_INIT;
 		const int resultA = inet_pton(AF_INET6, ipAddressA, &(sa.sin6_addr));
 		const int resultB = inet_pton(AF_INET6, ipAddressB, &(sb.sin6_addr));
-		if ((resultA != resultB) || (resultA != 0))
+		if ((resultA != resultB) || (resultA != 1))
 			return FALSE;
 		return memcmp(&sa, &sb, sizeof(sa)) == 0;
 	}
 	return FALSE;
+}
+
+BOOL utils_is_valid_ipN(const char* ipAddress, size_t len)
+{
+	if (!ipAddress || (len == 0))
+		return FALSE;
+	if (strnlen(ipAddress, len) > INET6_ADDRSTRLEN)
+		return FALSE;
+	return utils_is_valid_ip(ipAddress);
 }

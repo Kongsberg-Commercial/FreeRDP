@@ -30,7 +30,7 @@ static const COMMAND_LINE_ARGUMENT_A global_cmd_args[] = {
 	{ "azure", COMMAND_LINE_VALUE_REQUIRED,
 	  "[tenantid:<id>],[use-tenantid[:[on|off]],[ad:<url>]"
 	  "[avd-access:<format string>],[avd-token:<format string>],[avd-scope:<format string>],"
-	  "[auth-helper:<path|autodetect>]",
+	  "[user-agent:<string>],[auth-helper:<path|autodetect>]",
 	  nullptr, nullptr, -1, nullptr, "AzureAD options" },
 	{ "action-script", COMMAND_LINE_VALUE_REQUIRED, "<file-name>", "~/.config/freerdp/action.sh",
 	  nullptr, -1, nullptr, "Action script" },
@@ -176,9 +176,11 @@ static const COMMAND_LINE_ARGUMENT_A global_cmd_args[] = {
 	  "Fallback server to use if primary connection fails" },
 	{ "fipsmode", COMMAND_LINE_VALUE_BOOL, nullptr, nullptr, nullptr, -1, nullptr, "FIPS mode" },
 	{ "floatbar", COMMAND_LINE_VALUE_OPTIONAL,
-	  "sticky:[on|off],default:[visible|hidden],show:[always|fullscreen|window]", nullptr, nullptr,
-	  -1, nullptr,
-	  "floatbar is disabled by default (when enabled defaults to sticky in fullscreen mode)" },
+	  "sticky:[on|off],default:[visible|hidden],show:[always|fullscreen|window],position:[left|"
+	  "center|right]",
+	  nullptr, nullptr, -1, nullptr,
+	  "floatbar is disabled by default (when enabled defaults to sticky, centered, in fullscreen "
+	  "mode)" },
 	{ "fonts", COMMAND_LINE_VALUE_BOOL, nullptr, BoolValueTrue, nullptr, -1, nullptr,
 	  "smooth fonts (ClearType)" },
 	{ "force-console-callbacks", COMMAND_LINE_VALUE_BOOL, nullptr, BoolValueFalse, nullptr, -1,
@@ -362,8 +364,16 @@ static const COMMAND_LINE_ARGUMENT_A global_cmd_args[] = {
 	  BoolValueFalse, nullptr, -1, nullptr, "Use multiple monitors" },
 	{ "multitouch", COMMAND_LINE_VALUE_BOOL, nullptr, BoolValueFalse, nullptr, -1, nullptr,
 	  "Redirect multitouch input" },
+#if defined(WITH_RDPEUDP)
+	{ "multitransport", COMMAND_LINE_VALUE_BOOL | COMMAND_LINE_VALUE_OPTIONAL,
+	  "[tcp-only|udp|udp-preferred]", BoolValueTrue, nullptr, -1, nullptr,
+	  "Support multitransport protocol. With tcp-only just enable the capability but deny an "
+	  "actual switch UDP transport. udp (the default) enables the switch to UDP transport, "
+	  "udp-preferred also tunnels the static channels over it" },
+#else
 	{ "multitransport", COMMAND_LINE_VALUE_BOOL, nullptr, BoolValueTrue, nullptr, -1, nullptr,
 	  "Support multitransport protocol" },
+#endif
 	{ "nego", COMMAND_LINE_VALUE_BOOL, nullptr, BoolValueTrue, nullptr, -1, nullptr,
 	  "protocol security negotiation" },
 	{ "network", COMMAND_LINE_VALUE_REQUIRED,
@@ -403,8 +413,8 @@ static const COMMAND_LINE_ARGUMENT_A global_cmd_args[] = {
 	  nullptr, "Print base64 reconnect cookie after connecting" },
 	{ "printer", COMMAND_LINE_VALUE_OPTIONAL, "<name>[,<driver>[,default]]", nullptr, nullptr, -1,
 	  nullptr, "Redirect printer device" },
-	{ "proxy", COMMAND_LINE_VALUE_REQUIRED, "[<proto>://][<user>:<password>@]<host>[:<port>]",
-	  nullptr, nullptr, -1, nullptr,
+	{ "proxy", COMMAND_LINE_VALUE_REQUIRED,
+	  "[ignore|[<proto>://][<user>:<password>@]<host>[:<port>]]", nullptr, nullptr, -1, nullptr,
 	  "Proxy settings: override env. var (see also environment variable below). Protocol "
 	  "\"socks5\" should be given explicitly where \"http\" is default." },
 	{ "pth", COMMAND_LINE_VALUE_REQUIRED, "<password-hash>", nullptr, nullptr, -1, "pass-the-hash",
@@ -478,7 +488,9 @@ static const COMMAND_LINE_ARGUMENT_A global_cmd_args[] = {
 	{ "sound", COMMAND_LINE_VALUE_OPTIONAL,
 	  "[sys:<sys>,][dev:<dev>,][format:<format>,][rate:<rate>,][channel:<channel>,][latency:<"
 	  "latency>,][quality:<quality>]",
-	  nullptr, nullptr, -1, "audio", "Audio output (sound)" },
+	  nullptr, nullptr, -1, "audio",
+	  "Audio output (sound). <format> is a format tag (e.g. 0x704F) or its WAVE_FORMAT_ "
+	  "name with or without the prefix (e.g. opus, pcm, alaw, aac_ms)" },
 	{ "span", COMMAND_LINE_VALUE_FLAG, nullptr, nullptr, nullptr, -1, nullptr,
 	  "Span screen over multiple monitors" },
 	{ "spn-class", COMMAND_LINE_VALUE_REQUIRED, "<service-class>", nullptr, nullptr, -1, nullptr,

@@ -40,7 +40,11 @@ else()
 
   include(CheckSourceCompiles)
   if(APPLE)
-    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -Werror=unguarded-availability-new")
+    include(CheckCCompilerFlag)
+    check_c_compiler_flag("-Werror=unguarded-availability-new" C_FLAG)
+    if(C_FLAG)
+      set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -Werror=unguarded-availability-new")
+    endif()
   endif()
   check_source_compiles(
     C
@@ -86,6 +90,6 @@ endif()
 
 winpr_module_add(${CRT_FILES})
 
-if(BUILD_TESTING_INTERNAL OR BUILD_TESTING)
+if(BUILD_TESTING)
   add_subdirectory(test)
 endif()

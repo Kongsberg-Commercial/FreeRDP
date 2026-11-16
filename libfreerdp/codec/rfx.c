@@ -30,7 +30,9 @@
 #include <winpr/crt.h>
 #include <winpr/tchar.h>
 #include <winpr/sysinfo.h>
+#if !defined(WITHOUT_FREERDP_3x_DEPRECATED)
 #include <winpr/registry.h>
+#endif
 
 #include <freerdp/log.h>
 #include <freerdp/settings.h>
@@ -39,6 +41,8 @@
 #include <freerdp/primitives.h>
 #include <freerdp/codec/region.h>
 #include <freerdp/build-config.h>
+#include <freerdp/utils/helpers.h>
+#include <winpr/config-readers.h>
 
 #include "rfx_constants.h"
 #include "rfx_types.h"
@@ -54,8 +58,9 @@
 
 #define TAG FREERDP_TAG("codec")
 
+#if !defined(WITHOUT_FREERDP_3x_DEPRECATED)
 #define RFX_KEY "Software\\%s\\RemoteFX"
-
+#endif
 /**
  * The quantization values control the compression rate and quality. The value
  * range is between 6 and 15. The higher value, the higher compression rate
@@ -262,9 +267,12 @@ RFX_CONTEXT* rfx_context_new_ex(BOOL encoder, UINT32 ThreadingFlags)
 		goto fail;
 
 	priv->UseThreads = FALSE;
+
+	const char config[] = "remotefx.json";
 	if (!(ThreadingFlags & THREADING_FLAGS_DISABLE_THREADS))
 		priv->UseThreads = TRUE;
 
+#if !defined(WITHOUT_FREERDP_3x_DEPRECATED)
 	{
 		char* key = freerdp_getApplicatonDetailsRegKey(RFX_KEY);
 		if (key)
@@ -276,6 +284,8 @@ RFX_CONTEXT* rfx_context_new_ex(BOOL encoder, UINT32 ThreadingFlags)
 
 			if (status == ERROR_SUCCESS)
 			{
+				WLog_WARN(TAG, "HKLM.reg is deprecated since 3.33.0. ATTENTION: Use %s instead!",
+				          config);
 				DWORD dwType = 0;
 				DWORD dwValue = 0;
 				DWORD dwSize = sizeof(dwValue);
@@ -286,6 +296,15 @@ RFX_CONTEXT* rfx_context_new_ex(BOOL encoder, UINT32 ThreadingFlags)
 
 				RegCloseKey(hKey);
 			}
+		}
+	}
+#endif
+	{
+		WINPR_JSON* json = freerdp_GetJSONConfigFile(TRUE, config);
+		if (json)
+		{
+			winpr_config_apply_bool(config, json, "UseThreads", &priv->UseThreads);
+			WINPR_JSON_Delete(json);
 		}
 	}
 
@@ -1160,6 +1179,9 @@ BOOL rfx_process_message(RFX_CONTEXT* WINPR_RESTRICT context, const BYTE* WINPR_
 	if (!context || !data || !length)
 		return FALSE;
 
+	if ((left > UINT16_MAX) || (top > UINT16_MAX) || (dstHeight > UINT16_MAX))
+		return FALSE;
+
 	WINPR_ASSERT(context->priv);
 	RFX_MESSAGE* message = &context->currentMessage;
 
@@ -1336,6 +1358,14 @@ BOOL rfx_process_message(RFX_CONTEXT* WINPR_RESTRICT context, const BYTE* WINPR_
 			const UINT32 rh = 1UL * clippingRect.top + rect->height;
 			const uint16_t right = WINPR_ASSERTING_INT_CAST(UINT16, MIN(rw, dstWidth));
 			const uint16_t bottom = WINPR_ASSERTING_INT_CAST(UINT16, MIN(rh, dstHeight));
+			if ((rw > UINT16_MAX) || (rh > UINT16_MAX) || (right > UINT16_MAX) ||
+			    (bottom > UINT16_MAX))
+			{
+				region16_uninit(&updateRegion);
+				region16_uninit(&clippingRects);
+				return FALSE;
+			}
+
 			clippingRect.right = right;
 			clippingRect.bottom = bottom;
 			if (!region16_union_rect(&clippingRects, &clippingRects, &clippingRect))
@@ -1351,8 +1381,12 @@ BOOL rfx_process_message(RFX_CONTEXT* WINPR_RESTRICT context, const BYTE* WINPR_
 			RECTANGLE_16 updateRect = WINPR_C_ARRAY_INIT;
 			const RFX_TILE* tile = rfx_message_get_tile(message, i);
 
-			WINPR_ASSERT(left + tile->x <= UINT16_MAX);
-			WINPR_ASSERT(top + tile->y <= UINT16_MAX);
+			if ((1ul * left + tile->x > UINT16_MAX - 64) || (1ul * top + tile->y > UINT16_MAX - 64))
+			{
+				region16_uninit(&updateRegion);
+				region16_uninit(&clippingRects);
+				return FALSE;
+			}
 
 			updateRect.left = (UINT16)left + tile->x;
 			updateRect.top = (UINT16)top + tile->y;

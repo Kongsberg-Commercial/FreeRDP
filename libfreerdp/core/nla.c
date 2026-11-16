@@ -43,6 +43,7 @@
 #include <winpr/debug.h>
 #include <winpr/asn1.h>
 #include <winpr/secapi.h>
+#include <winpr/nt.h>
 
 #include "../crypto/tls.h"
 #include "nego.h"
@@ -1511,7 +1512,7 @@ static BOOL nla_read_ts_credentials(rdpNla* nla, SecBuffer* data)
 
 			/* cspData [1] TSCspDataDetail */
 			WinPrAsn1Decoder cspDetails = WinPrAsn1Decoder_init();
-			if (!WinPrAsn1DecReadContextualSequence(&dec, 1, &error, &cspDetails) && error)
+			if (!WinPrAsn1DecReadContextualSequence(&dec, 1, &error, &cspDetails) || error)
 				return FALSE;
 			if (!nla_read_TSCspDataDetail(&cspDetails, settings))
 				return FALSE;
@@ -1835,7 +1836,8 @@ static BOOL nla_encode_ts_password_credentials(rdpNla* nla, WinPrAsn1Encoder* en
 
 	const BOOL enabled =
 	    !freerdp_settings_get_bool(settings, FreeRDP_DisableCredentialsDelegation) &&
-	    !freerdp_settings_get_bool(settings, FreeRDP_RestrictedAdminModeRequired);
+	    !freerdp_settings_get_bool(settings, FreeRDP_RestrictedAdminModeRequired) &&
+	    !freerdp_settings_get_bool(settings, FreeRDP_RemoteCredentialGuard);
 	if (enabled && nla->identity)
 	{
 		username.len = nla->identity->UserLength * sizeof(WCHAR);
@@ -2356,6 +2358,13 @@ int nla_recv_pdu(rdpNla* nla, wStream* s)
 
 				case STATUS_LOGON_TYPE_NOT_GRANTED:
 					code = FREERDP_ERROR_CONNECT_LOGON_TYPE_NOT_GRANTED;
+					break;
+
+				case STATUS_NTLM_BLOCKED:
+				/* mstsc shows the same ambiguity for this code: NTLM policy block, or a
+				 * CredSSP encryption oracle remediation mismatch. */
+				case SEC_E_UNSUPPORTED_FUNCTION:
+					code = FREERDP_ERROR_CONNECT_NTLM_BLOCKED;
 					break;
 
 				default:

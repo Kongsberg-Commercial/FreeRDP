@@ -220,10 +220,11 @@ static BOOL rdp_client_reset_codecs(rdpContext* context)
 		                                   settings->DesktopWidth, settings->DesktopHeight))
 			return FALSE;
 
-/* Runtime H264 detection. (only available if dynamic backend loading is defined)
+/* Runtime H264 detection. (only available if dynamic backend loading is defined, or
+ * in the browser, which might not decode H.264)
  * If no backend is available disable it before the channel is loaded.
  */
-#if defined(WITH_GFX_H264) && defined(WITH_OPENH264_LOADING)
+#if defined(WITH_GFX_H264) && (defined(WITH_OPENH264_LOADING) || defined(WITH_H264_WEBCODECS))
 		if (!context->codecs->h264)
 		{
 			settings->GfxH264 = FALSE;
@@ -762,7 +763,13 @@ BOOL rdp_client_connect(rdpRdp* rdp)
 	if (!transport_set_recv_callbacks(rdp->transport, rdp_recv_callback, rdp))
 		return FALSE;
 
-	return rdp_client_wait_for_activation(rdp);
+	/* A tunnel the server asked for during the connection sequence is of no use when the
+	 * sequence fails. It is stopped now: the next disconnect, which would stop it too, can be a
+	 * long way off, an auto-reconnect waits between attempts. */
+	const BOOL activated = rdp_client_wait_for_activation(rdp);
+	if (!activated)
+		multitransport_reset(rdp->multitransport);
+	return activated;
 }
 
 BOOL rdp_client_disconnect(rdpRdp* rdp)
@@ -774,6 +781,12 @@ BOOL rdp_client_disconnect(rdpRdp* rdp)
 
 	context = rdp->context;
 
+	/* Leave the active state before the transport goes away: input functions are called from
+	 * other threads and only check the state, so they must stop before rdp_reset() frees the
+	 * transport and fastpath they use. */
+	if (!rdp_client_transition_to_state(rdp, CONNECTION_STATE_INITIAL))
+		return FALSE;
+
 	if (rdp->nego)
 	{
 		if (!nego_disconnect(rdp->nego))
@@ -784,9 +797,6 @@ BOOL rdp_client_disconnect(rdpRdp* rdp)
 		return FALSE;
 
 	if (!rdp_reset(rdp))
-		return FALSE;
-
-	if (!rdp_client_transition_to_state(rdp, CONNECTION_STATE_INITIAL))
 		return FALSE;
 
 	if (context->channels)
@@ -980,6 +990,7 @@ BOOL rdp_client_redirect(rdpRdp* rdp)
 	if (!ok)
 		return FALSE;
 
+	rdp->redirectionCount++;
 	status = rdp_client_connect(rdp);
 
 	if (status)
@@ -1002,9 +1013,115 @@ static BOOL rdp_client_reconnect_notify(rdpRdp* rdp, UINT32 attempt)
 	return TRUE;
 }
 
+/* A redirection that carried a one-time RDSTLS token (LB_PASSWORD_IS_PK_ENCRYPTED) cannot be
+ * replayed: reconnecting straight to the redirected host is refused with SEC_E_INVALID_TOKEN.
+ * Go back to the server the connection was originally made to (the RD Connection Broker), which
+ * redirects again to the same session with a fresh token. Everything the redirection changed
+ * (host, load balance info, user, redirected session id, auto-reconnect cookie) has to go, so
+ * start again from the settings the connection began with, the way rdp_client_redirect() does:
+ * the channels are closed before the settings they use are freed, and loaded again after. */
+WINPR_ATTR_NODISCARD
+static BOOL rdp_client_reconnect_via_broker(rdpRdp* rdp, BOOL* viaBroker)
+{
+	WINPR_ASSERT(rdp);
+	WINPR_ASSERT(viaBroker);
+	*viaBroker = FALSE;
+	const rdpSettings* settings = rdp->settings;
+	WINPR_ASSERT(settings);
+
+	if (!rdp->originalSettings || !freerdp_settings_get_bool(settings, FreeRDP_RdstlsSecurity))
+		return TRUE;
+	if ((freerdp_settings_get_uint32(settings, FreeRDP_RedirectionFlags) &
+	     LB_PASSWORD_IS_PK_ENCRYPTED) == 0)
+		return TRUE;
+
+	WINPR_ASSERT(rdp->context);
+	WINPR_ASSERT(rdp->context->instance);
+	WLog_INFO(TAG, "the redirection used a one-time RDSTLS token, reconnecting through %s",
+	          freerdp_settings_get_string(rdp->originalSettings, FreeRDP_ServerHostname));
+
+	freerdp_channels_disconnect(rdp->context->channels, rdp->context->instance);
+	freerdp_channels_close(rdp->context->channels, rdp->context->instance);
+
+	if (!rdp_reset_runtime_settings(rdp))
+		return FALSE;
+	if (!freerdp_settings_set_bool(rdp->settings, FreeRDP_SessionHasBeenReconnected, TRUE))
+		return FALSE;
+	if (!IFCALLRESULT(TRUE, rdp->context->instance->Redirect, rdp->context->instance))
+		return FALSE;
+	if (!utils_reload_channels(rdp->context))
+		return FALSE;
+
+	*viaBroker = TRUE;
+	return TRUE;
+}
+
+/* Pause before reconnecting a connection that its UDP tunnel ended, see rdp_client_reconnect. */
+#define TUNNEL_RECONNECT_PAUSE_MS 2000
+
+/* One connect attempt to the server currently in ServerHostname/ServerPort.
+ * allowBroker: reconnect through the RD Connection Broker when needed (upstream behaviour).
+ * Not used with a fallback server, where the fork picks the target host itself. */
+static BOOL rdp_client_reconnect_attempt(rdpRdp* rdp, BOOL allowBroker)
+{
+	BOOL viaBroker = FALSE;
+	if (allowBroker && !rdp_client_reconnect_via_broker(rdp, &viaBroker))
+		return FALSE;
+
+	const UINT32 redirectionCount = rdp->redirectionCount;
+	if (!rdp_client_connect(rdp))
+		return FALSE;
+
+	/* When the broker redirected us, rdp_client_redirect() already reloaded and reconnected the
+	 * channels (rdp_check_fds() runs it from inside rdp_client_connect()); doing it a second time
+	 * fails with CHANNEL_RC_ALREADY_OPEN and makes the whole attempt fail. */
+	if (rdp->redirectionCount != redirectionCount)
+		return TRUE;
+
+	if (!rdp_client_reconnect_channels(rdp, viaBroker))
+	{
+		WLog_ERR(TAG, "Failed to reconnect channels, will retry");
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/* Title and full redraw after the session is up again on primary or fallback */
+static void rdp_client_reconnect_finish(rdpRdp* rdp)
+{
+	rdpSettings* settings = rdp->context->settings;
+
+	/* UPDATE WINDOW TITLE AFTER SUCCESSFUL RECONNECT */
+	append_server_to_window_title(rdp);
+
+	/* FORCE FULL WINDOW REFRESH AFTER RECONNECT */
+	rdpContext* context = rdp->context;
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(context->update);
+
+	/* Invalidate entire screen to force full redraw */
+	if (context->update->RefreshRect)
+	{
+		RECTANGLE_16 area = { 0 };
+		area.left = 0;
+		area.top = 0;
+		area.right = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+		area.bottom = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
+
+		if (!context->update->RefreshRect(context, 1, &area))
+			WLog_WARN(TAG, "RefreshRect failed during reconnect");
+	}
+
+	/* Call DesktopResize to update window dimensions if needed */
+	if (context->update->DesktopResize)
+	{
+		if (!context->update->DesktopResize(context))
+			WLog_WARN(TAG, "DesktopResize callback failed during reconnect");
+	}
+}
+
 BOOL rdp_client_reconnect(rdpRdp* rdp)
 {
-	BOOL status = FALSE;
 	rdpSettings* settings = NULL;
 	UINT32 maxRetries = 0;
 	UINT32 currentAttempt = 0;
@@ -1018,6 +1135,10 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 
 	settings = rdp->context->settings;
 	WINPR_ASSERT(settings);
+
+	/* A connection ended by its UDP tunnel closes TCP cleanly, and the server starts tearing
+	 * the session down at once. Windows drops a reconnect that arrives during that teardown. */
+	const BOOL tunnelEnded = multitransport_ended_connection(rdp->multitransport);
 
 	/* Get fallback server from settings */
 	const char* fbServer = freerdp_settings_get_string(settings, FreeRDP_FallbackServerHostname);
@@ -1057,208 +1178,79 @@ BOOL rdp_client_reconnect(rdpRdp* rdp)
 
 	maxRetries = freerdp_settings_get_uint32(settings, FreeRDP_AutoReconnectMaxRetries);
 
-	/* If no fallback configured, just try primary server */
-	if (!fallbackAddress)
-	{
+	/* Without a fallback alternate nothing: every attempt goes to the primary */
+	if (fallbackAddress)
+		WLog_INFO(TAG,
+		          "Starting reconnection sequence: primary=%s:%" PRIu32 " fallback=%s:%" PRIu32,
+		          primaryServer, primaryPort, fallbackAddress, fallbackPort);
+	else
 		WLog_INFO(TAG,
 		          "No fallback server configured, attempting reconnect to primary: %s:%" PRIu32,
 		          primaryServer, primaryPort);
 
-		for (currentAttempt = 0; currentAttempt < maxRetries; currentAttempt++)
-		{
-			WLog_INFO(TAG, "Reconnection attempt %" PRIu32 " of %" PRIu32 " to %s:%" PRIu32,
-			          currentAttempt + 1, maxRetries, primaryServer, primaryPort);
-
-			if (!rdp_client_disconnect_and_clear(rdp))
-			{
-				WLog_ERR(TAG, "Failed to disconnect before reconnecting");
-				free(primaryServer);
-				return FALSE;
-			}
-
-			if (!freerdp_settings_set_string(settings, FreeRDP_ServerHostname, primaryServer) ||
-			    !freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, primaryPort))
-			{
-				free(primaryServer);
-				return FALSE;
-			}
-
-			if (!rdp_client_reconnect_notify(rdp, currentAttempt))
-			{
-				free(primaryServer);
-				return FALSE;
-			}
-
-			Sleep(1000);
-
-			status = rdp_client_connect(rdp);
-			if (status && rdp_client_reconnect_channels(rdp, FALSE))
-			{
-				WLog_INFO(TAG, "Successfully reconnected to %s:%" PRIu32, primaryServer,
-				          primaryPort);
-
-				/* UPDATE WINDOW TITLE AFTER SUCCESSFUL RECONNECT */
-				append_server_to_window_title(rdp);
-
-				/* FORCE FULL WINDOW REFRESH AFTER RECONNECT */
-				rdpContext* context = rdp->context;
-				WINPR_ASSERT(context);
-				WINPR_ASSERT(context->update);
-
-				/* Invalidate entire screen to force full redraw */
-				if (context->update->RefreshRect)
-				{
-					RECTANGLE_16 area = { 0 };
-					area.left = 0;
-					area.top = 0;
-					area.right = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
-					area.bottom = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
-					
-					if (!context->update->RefreshRect(context, 1, &area))
-						WLog_WARN(TAG, "RefreshRect failed during reconnect");
-				}
-
-				/* Call DesktopResize to update window dimensions if needed */
-				if (context->update->DesktopResize)
-				{
-					if (!context->update->DesktopResize(context))
-						WLog_WARN(TAG, "DesktopResize callback failed during reconnect");
-				}
-
-				free(primaryServer);
-				return TRUE;
-			}
-
-			if (currentAttempt + 1 < maxRetries)
-			{
-				if (!rdp_client_reconnect_notify(rdp, currentAttempt))
-				{
-					free(primaryServer);
-					return FALSE;
-				}
-				Sleep(3000);
-			}
-		}
-
-		WLog_ERR(TAG, "All %" PRIu32 " reconnection attempts exhausted", maxRetries);
-		free(primaryServer);
-		return FALSE;
-	}
-
-	/* Fallback is configured, alternate between primary and fallback */
-	WLog_INFO(TAG, "Starting reconnection sequence: primary=%s:%" PRIu32 " fallback=%s:%" PRIu32,
-	          primaryServer, primaryPort, fallbackAddress, fallbackPort);
-
+	BOOL success = FALSE;
 	for (currentAttempt = 0; currentAttempt < maxRetries; currentAttempt++)
 	{
-		BOOL usingPrimary = (currentAttempt % 2) == 0;
+		const BOOL usingPrimary = !fallbackAddress || ((currentAttempt % 2) == 0);
 		const char* targetServer = usingPrimary ? primaryServer : fallbackAddress;
-		UINT32 targetPort = usingPrimary ? primaryPort : fallbackPort;
+		const UINT32 targetPort = usingPrimary ? primaryPort : fallbackPort;
+		const char* role = usingPrimary ? "primary" : "fallback";
 
 		WLog_INFO(TAG, "Reconnection attempt %" PRIu32 " of %" PRIu32 " to %s server %s:%" PRIu32,
-		          currentAttempt + 1, maxRetries, usingPrimary ? "primary" : "fallback",
-		          targetServer, targetPort);
+		          currentAttempt + 1, maxRetries, role, targetServer, targetPort);
 
 		if (!rdp_client_disconnect_and_clear(rdp))
 		{
 			WLog_ERR(TAG, "Failed to disconnect before reconnecting");
-			free(primaryServer);
-			free(fallbackAddress);
-			return FALSE;
+			break;
+		}
+
+		if ((currentAttempt == 0) && tunnelEnded)
+		{
+			WLog_DBG(TAG, "the UDP tunnel ended the connection, reconnecting in %d ms",
+			         TUNNEL_RECONNECT_PAUSE_MS);
+			if (WaitForSingleObject(utils_get_abort_event(rdp), TUNNEL_RECONNECT_PAUSE_MS) ==
+			    WAIT_OBJECT_0)
+				break;
 		}
 
 		if (!freerdp_settings_set_string(settings, FreeRDP_ServerHostname, targetServer) ||
 		    !freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, targetPort))
-		{
-			free(primaryServer);
-			free(fallbackAddress);
-			return FALSE;
-		}
+			break;
 
 		if (!rdp_client_reconnect_notify(rdp, currentAttempt))
-		{
-			free(primaryServer);
-			free(fallbackAddress);
-			return FALSE;
-		}
+			break;
 
 		Sleep(1000);
 
 		WLog_INFO(TAG, "Attempting TCP connection to %s:%" PRIu32, targetServer, targetPort);
-		status = rdp_client_connect(rdp);
-
-		if (status)
+		if (rdp_client_reconnect_attempt(rdp, !fallbackAddress))
 		{
-			WLog_INFO(TAG, "TCP connection established to %s server %s:%" PRIu32,
-			          usingPrimary ? "primary" : "fallback", targetServer, targetPort);
-
-			if (!rdp_client_reconnect_channels(rdp, FALSE))
-			{
-				WLog_ERR(TAG, "Failed to reconnect channels, will retry");
-				status = FALSE;
-			}
-			else
-			{
-				WLog_INFO(TAG, "Successfully reconnected to %s server %s:%" PRIu32,
-				          usingPrimary ? "primary" : "fallback", targetServer, targetPort);
-
-				/* UPDATE WINDOW TITLE AFTER SUCCESSFUL RECONNECT */
-				append_server_to_window_title(rdp);
-
-				/* FORCE FULL WINDOW REFRESH AFTER RECONNECT */
-				rdpContext* context = rdp->context;
-				WINPR_ASSERT(context);
-				WINPR_ASSERT(context->update);
-
-				/* Invalidate entire screen to force full redraw */
-				if (context->update->RefreshRect)
-				{
-					RECTANGLE_16 area = { 0 };
-					area.left = 0;
-					area.top = 0;
-					area.right = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
-					area.bottom = (UINT16)freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
-					
-					if (!context->update->RefreshRect(context, 1, &area))
-						WLog_WARN(TAG, "RefreshRect failed during reconnect");
-				}
-
-				/* Call DesktopResize to update window dimensions if needed */
-				if (context->update->DesktopResize)
-				{
-					if (!context->update->DesktopResize(context))
-						WLog_WARN(TAG, "DesktopResize callback failed during reconnect");
-				}
-
-				free(primaryServer);
-				free(fallbackAddress);
-				return TRUE;
-			}
+			WLog_INFO(TAG, "Successfully reconnected to %s server %s:%" PRIu32, role,
+			          targetServer, targetPort);
+			rdp_client_reconnect_finish(rdp);
+			success = TRUE;
+			break;
 		}
-		else
-		{
-			WLog_WARN(TAG, "Failed to connect to %s server %s:%" PRIu32,
-			          usingPrimary ? "primary" : "fallback", targetServer, targetPort);
-		}
+
+		WLog_WARN(TAG, "Failed to connect to %s server %s:%" PRIu32, role, targetServer,
+		          targetPort);
 
 		if (currentAttempt + 1 < maxRetries)
 		{
 			/* Second notify keeps the UI pumped during the long wait */
 			if (!rdp_client_reconnect_notify(rdp, currentAttempt))
-			{
-				free(primaryServer);
-				free(fallbackAddress);
-				return FALSE;
-			}
+				break;
 			WLog_INFO(TAG, "Waiting 3 seconds before next attempt...");
 			Sleep(3000);
 		}
 	}
 
-	WLog_ERR(TAG, "All %" PRIu32 " reconnection attempts exhausted", maxRetries);
+	if (!success && (currentAttempt >= maxRetries))
+		WLog_ERR(TAG, "All %" PRIu32 " reconnection attempts exhausted", maxRetries);
 	free(primaryServer);
 	free(fallbackAddress);
-	return FALSE;
+	return success;
 }
 
 static const BYTE fips_ivec[8] = { 0x12, 0x34, 0x56, 0x78, 0x90, 0xAB, 0xCD, 0xEF };
@@ -1448,6 +1440,9 @@ BOOL rdp_server_establish_keys(rdpRdp* rdp, wStream* s)
 
 	if (!rdp_read_header(rdp, s, &length, &channel_id))
 		return FALSE;
+
+	if (freerdp_shall_disconnect_context(rdp->context))
+		return TRUE;
 
 	if (!rdp_read_security_header(rdp, s, &sec_flags, nullptr))
 	{
@@ -1747,6 +1742,9 @@ BOOL rdp_client_connect_auto_detect(rdpRdp* rdp, wStream* s, DWORD logLevel)
 		res = FALSE;
 	else
 	{
+		if (freerdp_shall_disconnect_context(rdp->context))
+			return TRUE;
+
 		const UINT16 messageChannelId = rdp->mcs->messageChannelId;
 		/* If the MCS message channel has been joined... */
 
@@ -1782,6 +1780,9 @@ state_run_t rdp_client_connect_license(rdpRdp* rdp, wStream* s)
 	WINPR_ASSERT(rdp);
 	if (!rdp_read_header(rdp, s, &length, &channelId))
 		return STATE_RUN_FAILED;
+
+	if (freerdp_shall_disconnect_context(rdp->context))
+		return STATE_RUN_QUIT_SESSION;
 
 	/* there might be autodetect messages mixed in between licensing messages.
 	 * that has been observed with 2k12 R2 and 2k19
@@ -1871,12 +1872,25 @@ state_run_t rdp_client_connect_demand_active(rdpRdp* rdp, wStream* s)
 	if (!rdp_handle_optional_rdp_decryption(rdp, s, &length, nullptr))
 		return STATE_RUN_FAILED;
 
-	if (!rdp_read_share_control_header(rdp, s, nullptr, nullptr, &pduType, &pduSource))
+	UINT16 remainingLength = 0;
+	if (!rdp_read_share_control_header(rdp, s, nullptr, &remainingLength, &pduType, &pduSource))
 		return STATE_RUN_FAILED;
 
 	switch (pduType)
 	{
 		case PDU_TYPE_DEMAND_ACTIVE:
+			/* Demand Active consumes this entire payload. Check its Share Control
+			 * boundary after decryption, when security headers and FIPS padding
+			 * have been removed. Do not apply this to other, potentially batched
+			 * Share Control PDUs. */
+			if (remainingLength != Stream_GetRemainingLength(s))
+			{
+				WLog_Print(rdp->log, WLOG_ERROR,
+				           "Demand Active payload length %" PRIu16
+				           " differs from remaining data %" PRIuz,
+				           remainingLength, Stream_GetRemainingLength(s));
+				return STATE_RUN_FAILED;
+			}
 			if (!rdp_recv_demand_active(rdp, s, pduSource, length))
 				return STATE_RUN_FAILED;
 			return STATE_RUN_ACTIVE;
@@ -1885,7 +1899,8 @@ state_run_t rdp_client_connect_demand_active(rdpRdp* rdp, wStream* s)
 	}
 }
 
-state_run_t rdp_client_connect_finalize(rdpRdp* rdp)
+WINPR_ATTR_NODISCARD
+static state_run_t rdp_client_connect_finalize(rdpRdp* rdp)
 {
 	WINPR_ASSERT(rdp);
 	/**
@@ -2792,7 +2807,11 @@ state_run_t rdp_client_connect_confirm_active(rdpRdp* rdp, WINPR_ATTR_UNUSED wSt
 
 		rdp_update_internal* up = update_cast(rdp->update);
 		up->stats.base[RDP_STATS_RESIZE]++;
+
+		/* Keep the lock order of BeginPaint/EndPaint: update lock first, client locks second */
+		rdp_update_lock(rdp->update);
 		IFCALLRET(rdp->update->DesktopResize, status, rdp->update->context);
+		rdp_update_unlock(rdp->update);
 
 		if (!status)
 		{
@@ -2824,10 +2843,9 @@ state_run_t rdp_client_connect_confirm_active(rdpRdp* rdp, WINPR_ATTR_UNUSED wSt
 	if (!cache_resize(rdp->context))
 		return STATE_RUN_FAILED;
 
-	state_run_t status = STATE_RUN_SUCCESS;
-	if (!rdp->settings->SupportMonitorLayoutPdu)
-		status = rdp_client_connect_finalize(rdp);
-	else
+	state_run_t status = rdp_client_connect_finalize(rdp);
+	if (state_run_success(status) &&
+	    freerdp_settings_get_bool(rdp->settings, FreeRDP_SupportMonitorLayoutPdu))
 	{
 		if (!rdp_client_transition_to_state(rdp,
 		                                    CONNECTION_STATE_CAPABILITIES_EXCHANGE_MONITOR_LAYOUT))

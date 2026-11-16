@@ -46,6 +46,7 @@
 #include <winpr/wtsapi.h>
 #include <winpr/ssl.h>
 #include <winpr/debug.h>
+#include <winpr/i18n.h>
 
 #include <freerdp/freerdp.h>
 #include <freerdp/streamdump.h>
@@ -63,6 +64,11 @@
 
 #define TAG FREERDP_TAG("core")
 
+BOOL freerdp_enable_translation(const char* locale, const char* searchPath)
+{
+	return winpr_i18n_enable_translation(locale) && winpr_i18n_bind_domain("freerdp", searchPath);
+}
+
 static void sig_abort_connect(int signum, const char* signame, void* ctx)
 {
 	rdpContext* context = (rdpContext*)ctx;
@@ -70,7 +76,10 @@ static void sig_abort_connect(int signum, const char* signame, void* ctx)
 	WLog_INFO(TAG, "Signal %s [%d], terminating session %p", signame, signum,
 	          WINPR_CXX_COMPAT_CAST(const void*, context));
 	if (context)
+	{
+		freerdp_set_last_error(context, FREERDP_ERROR_CONNECT_CANCELLED);
 		freerdp_abort_connect_context(context);
+	}
 }
 
 /** Creates a new connection based on the settings found in the "instance" parameter
@@ -1219,30 +1228,27 @@ const char* freerdp_get_logon_error_info_type(UINT32 type)
 		CASE_ENTRY(ERROR_CODE_ACCESS_DENIED);
 
 		default:
-			return "UNKNOWN";
+			return NtStatus2Tag((NTSTATUS)type);
 	}
 #undef CASE_ENTRY
 }
 
 const char* freerdp_get_logon_error_info_data(UINT32 data)
 {
+#define CASE_ENTRY(x) \
+	case x:           \
+		return #x
 	switch (data)
 	{
-		case LOGON_FAILED_BAD_PASSWORD:
-			return "LOGON_FAILED_BAD_PASSWORD";
-
-		case LOGON_FAILED_UPDATE_PASSWORD:
-			return "LOGON_FAILED_UPDATE_PASSWORD";
-
-		case LOGON_FAILED_OTHER:
-			return "LOGON_FAILED_OTHER";
-
-		case LOGON_WARNING:
-			return "LOGON_WARNING";
+		CASE_ENTRY(LOGON_FAILED_BAD_PASSWORD);
+		CASE_ENTRY(LOGON_FAILED_UPDATE_PASSWORD);
+		CASE_ENTRY(LOGON_FAILED_OTHER);
+		CASE_ENTRY(LOGON_WARNING);
 
 		default:
 			return "SESSION_ID";
 	}
+#undef CASE_ENTRY
 }
 
 const char* freerdp_get_logon_error_info_data_ex(UINT32 data, char* buffer, size_t size)

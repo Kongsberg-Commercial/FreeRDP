@@ -817,7 +817,8 @@ static BOOL gdi_line_to(rdpContext* context, const LINE_TO_ORDER* lineTo)
 
 	WINPR_ASSERT(gdi->drawing);
 
-	gdi_SelectObject(gdi->drawing->hdc, (HGDIOBJECT)hPen);
+	HGDI_PEN originalPen = gdi->drawing->hdc->pen;
+	gdi->drawing->hdc->pen = hPen;
 	gdi_SetROP2(gdi->drawing->hdc, WINPR_ASSERTING_INT_CAST(int32_t, lineTo->bRop2));
 	if (!gdi_MoveToEx(gdi->drawing->hdc, lineTo->nXStart, lineTo->nYStart, nullptr))
 		goto fail;
@@ -826,6 +827,7 @@ static BOOL gdi_line_to(rdpContext* context, const LINE_TO_ORDER* lineTo)
 
 	rc = TRUE;
 fail:
+	gdi->drawing->hdc->pen = originalPen;
 	gdi_DeleteObject((HGDIOBJECT)hPen);
 	return rc;
 }
@@ -851,7 +853,8 @@ static BOOL gdi_polyline(rdpContext* context, const POLYLINE_ORDER* polyline)
 	if (!hPen)
 		return FALSE;
 
-	gdi_SelectObject(gdi->drawing->hdc, (HGDIOBJECT)hPen);
+	HGDI_PEN originalPen = gdi->drawing->hdc->pen;
+	gdi->drawing->hdc->pen = hPen;
 	gdi_SetROP2(gdi->drawing->hdc, WINPR_ASSERTING_INT_CAST(int32_t, polyline->bRop2));
 	INT32 x = polyline->xStart;
 	INT32 y = polyline->yStart;
@@ -871,6 +874,7 @@ static BOOL gdi_polyline(rdpContext* context, const POLYLINE_ORDER* polyline)
 
 	rc = TRUE;
 fail:
+	gdi->drawing->hdc->pen = originalPen;
 	gdi_DeleteObject((HGDIOBJECT)hPen);
 	return rc;
 }
@@ -1391,10 +1395,15 @@ BOOL gdi_resize_ex(rdpGdi* gdi, UINT32 width, UINT32 height, UINT32 stride, UINT
 	WINPR_ASSERT(gdi->context);
 	WINPR_ASSERT(gdi->context->update);
 
-	/* EndPaint might not have been called, ensure the update lock is released */
-	if (!update_end_paint(gdi->context->update))
-		return FALSE;
+	/* Take the (recursive) update lock first, this waits for a paint in progress on another
+	 * thread. A paint still open afterwards belongs to this thread: EndPaint might not have
+	 * been called, ensure its update lock is released */
 	rdp_update_lock(gdi->context->update);
+	if (!update_end_paint(gdi->context->update))
+	{
+		rdp_update_unlock(gdi->context->update);
+		return FALSE;
+	}
 
 	if (gdi->drawing == gdi->primary)
 		gdi->drawing = nullptr;

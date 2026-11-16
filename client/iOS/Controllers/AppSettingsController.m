@@ -11,6 +11,7 @@
 #import "AppSettingsController.h"
 #import "Utils.h"
 #import "Toast+UIView.h"
+#include <freerdp/settings.h>
 
 @implementation AppSettingsController
 
@@ -81,7 +82,8 @@
 	switch (section)
 	{
 		case SECTION_UI_SETTINGS: // UI settings
-			return 4;
+			// avoiding screen edges only applies to iPhone
+			return IsPad() ? 2 : 3;
 		case SECTION_CERTIFICATE_HANDLING_SETTINGS: // certificate handling settings
 			return 2;
 		default:
@@ -123,7 +125,6 @@
 				case 0:
 				case 1:
 				case 2:
-				case 3:
 					cellIdentifier = TableCellIdentifierYesNo;
 					break;
 			}
@@ -177,31 +178,6 @@
 		case 0:
 		{
 			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
-			[flagCell setTitle:NSLocalizedString(@"Hide Status Bar",
-			                                     "Show/Hide Phone Status Bar setting")];
-			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
-			[[flagCell toggle]
-			    setOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"ui.hide_status_bar"]];
-			[[flagCell toggle] addTarget:self
-			                      action:@selector(toggleSettingValue:)
-			            forControlEvents:UIControlEventValueChanged];
-			break;
-		}
-		case 1:
-		{
-			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
-			[flagCell setTitle:NSLocalizedString(@"Hide Tool Bar", "Show/Hide Tool Bar setting")];
-			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
-			[[flagCell toggle]
-			    setOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"ui.hide_tool_bar"]];
-			[[flagCell toggle] addTarget:self
-			                      action:@selector(toggleSettingValue:)
-			            forControlEvents:UIControlEventValueChanged];
-			break;
-		}
-		case 2:
-		{
-			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
 			[flagCell
 			    setTitle:NSLocalizedString(@"Swap Mouse Buttons", "Swap Mouse Button UI setting")];
 			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
@@ -212,7 +188,7 @@
 			            forControlEvents:UIControlEventValueChanged];
 			break;
 		}
-		case 3:
+		case 1:
 		{
 			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
 			[flagCell
@@ -220,6 +196,19 @@
 			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
 			[[flagCell toggle]
 			    setOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"ui.invert_scrolling"]];
+			[[flagCell toggle] addTarget:self
+			                      action:@selector(toggleSettingValue:)
+			            forControlEvents:UIControlEventValueChanged];
+			break;
+		}
+		case 2:
+		{
+			EditFlagTableViewCell *flagCell = (EditFlagTableViewCell *)cell;
+			[flagCell
+			    setTitle:NSLocalizedString(@"Avoid Screen Edges", "Avoid Screen Edges UI setting")];
+			[[flagCell toggle] setTag:GET_TAG_FROM_PATH(indexPath)];
+			[[flagCell toggle]
+			    setOn:[[NSUserDefaults standardUserDefaults] boolForKey:@"ui.avoid_screen_edges"]];
 			[[flagCell toggle] addTarget:self
 			                      action:@selector(toggleSettingValue:)
 			            forControlEvents:UIControlEventValueChanged];
@@ -277,13 +266,26 @@
 	// clear certificate cache
 	if ([indexPath section] == SECTION_CERTIFICATE_HANDLING_SETTINGS && [indexPath row] == 1)
 	{
-		// delete certificates cache
-		NSError *err;
-		if ([[NSFileManager defaultManager]
-		        removeItemAtPath:[[NSSearchPathForDirectoriesInDomains(
-		                             NSDocumentDirectory, NSUserDomainMask, YES) lastObject]
-		                             stringByAppendingPathComponent:@"/.freerdp"]
-		                   error:&err])
+		BOOL cleared = YES;
+		// get config path using freerdp api
+		char *config = freerdp_settings_get_config_path();
+		if (config)
+		{
+			NSString *configPath = [NSString stringWithUTF8String:config];
+			NSFileManager *fileManager = [NSFileManager defaultManager];
+			NSString *path = [configPath stringByAppendingPathComponent:@"server"];
+			if ([fileManager fileExistsAtPath:path] && ![fileManager removeItemAtPath:path
+			                                                                    error:nil])
+				cleared = NO;
+
+			free(config);
+		}
+		else
+		{
+			cleared = NO;
+		}
+
+		if (cleared)
 			[[self view] makeToast:NSLocalizedString(@"Certificate Cache cleared!",
 			                                         @"Clear Certificate cache success message")
 			              duration:ToastDurationNormal
@@ -306,24 +308,19 @@
 	{
 		case GET_TAG(SECTION_UI_SETTINGS, 0):
 			[[NSUserDefaults standardUserDefaults] setBool:[valueSwitch isOn]
-			                                        forKey:@"ui.hide_status_bar"];
-			break;
-
-		case GET_TAG(SECTION_UI_SETTINGS, 1):
-			[[NSUserDefaults standardUserDefaults] setBool:[valueSwitch isOn]
-			                                        forKey:@"ui.hide_tool_bar"];
-			break;
-
-		case GET_TAG(SECTION_UI_SETTINGS, 2):
-			[[NSUserDefaults standardUserDefaults] setBool:[valueSwitch isOn]
 			                                        forKey:@"ui.swap_mouse_buttons"];
 			SetSwapMouseButtonsFlag([valueSwitch isOn]);
 			break;
 
-		case GET_TAG(SECTION_UI_SETTINGS, 3):
+		case GET_TAG(SECTION_UI_SETTINGS, 1):
 			[[NSUserDefaults standardUserDefaults] setBool:[valueSwitch isOn]
 			                                        forKey:@"ui.invert_scrolling"];
 			SetInvertScrollingFlag([valueSwitch isOn]);
+			break;
+
+		case GET_TAG(SECTION_UI_SETTINGS, 2):
+			[[NSUserDefaults standardUserDefaults] setBool:[valueSwitch isOn]
+			                                        forKey:@"ui.avoid_screen_edges"];
 			break;
 
 		case GET_TAG(SECTION_CERTIFICATE_HANDLING_SETTINGS, 0):

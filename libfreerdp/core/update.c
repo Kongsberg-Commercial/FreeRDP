@@ -218,6 +218,37 @@ static BOOL update_read_bitmap_data(rdpUpdate* update, wStream* s, BITMAP_DATA* 
 		         bitmapData->height);
 		return FALSE;
 	}
+	if (bitmapData->destLeft > bitmapData->destRight)
+	{
+		WLog_ERR(TAG, "Invalid BITMAP_DATA: left=%" PRIu16 " > right=%" PRIu16,
+		         bitmapData->destLeft, bitmapData->destRight);
+		return FALSE;
+	}
+	if (bitmapData->destTop > bitmapData->destBottom)
+	{
+		WLog_ERR(TAG, "Invalid BITMAP_DATA: top=%" PRIu16 " > bottom=%" PRIu16, bitmapData->destTop,
+		         bitmapData->destBottom);
+		return FALSE;
+	}
+
+	/* The bitmap may be wider than the rectangle it is drawn to: servers pad
+	 * the width (xrdp to a multiple of 4, as the interleaved codec needs), and
+	 * only right - left + 1 columns are painted. It must not be smaller. */
+	const UINT32 w = 1u + bitmapData->destRight - bitmapData->destLeft;
+	if (w > bitmapData->width)
+	{
+		WLog_ERR(TAG, "Invalid BITMAP_DATA: width=%" PRIu16 " < right - left + 1=%" PRIu32,
+		         bitmapData->width, w);
+		return FALSE;
+	}
+
+	const UINT32 h = 1u + bitmapData->destBottom - bitmapData->destTop;
+	if (h > bitmapData->height)
+	{
+		WLog_ERR(TAG, "Invalid BITMAP_DATA: height=%" PRIu16 " < bottom - top + 1=%" PRIu32,
+		         bitmapData->height, h);
+		return FALSE;
+	}
 
 	if (bitmapData->flags & BITMAP_COMPRESSION)
 	{
@@ -2568,6 +2599,13 @@ BOOL update_read_refresh_rect(rdpUpdate* update, wStream* s)
 	RECTANGLE_16 areas[256] = WINPR_C_ARRAY_INIT;
 	rdp_update_internal* up = update_cast(update);
 
+	if (!freerdp_is_active_state(update->context))
+	{
+		WLog_Print(up->log, WLOG_ERROR,
+		           "refresh rect request from client before activation, aborting");
+		return FALSE;
+	}
+
 	if (!Stream_CheckAndLogRequiredLength(TAG, s, 4))
 		return FALSE;
 
@@ -2607,6 +2645,11 @@ BOOL update_read_suppress_output(rdpUpdate* update, wStream* s)
 	WINPR_ASSERT(up);
 	WINPR_ASSERT(s);
 
+	if (!freerdp_is_active_state(update->context))
+	{
+		WLog_Print(up->log, WLOG_ERROR, "suppress output from client before activation, aborting");
+		return FALSE;
+	}
 	if (!Stream_CheckAndLogRequiredLength(TAG, s, 4))
 		return FALSE;
 

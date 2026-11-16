@@ -27,30 +27,10 @@
 #include <freerdp/streamdump.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/client/cmdline.h>
-#include <freerdp/client/fallback.h>
 
 #include "../xf_client.h"
+#include "../xf_cmdline.h"
 #include "../xfreerdp.h"
-
-static COMMAND_LINE_ARGUMENT_A xf_custom_args[] = {
-	{ FREERDP_CLIENT_FALLBACK_SWITCHBACK_ARG, COMMAND_LINE_VALUE_BOOL, nullptr, BoolValueFalse,
-	  nullptr, -1, nullptr,
-	  "automatic switch back to the primary server when it is reachable again (needs "
-	  "/fallback-server and /auto-reconnect)" },
-	{ nullptr, 0, nullptr, nullptr, nullptr, -1, nullptr, nullptr }
-};
-
-static int xf_handle_custom_arg(const COMMAND_LINE_ARGUMENT_A* arg, void* custom)
-{
-	xfContext* xfc = (xfContext*)custom;
-	if (!xfc || !arg || !arg->Name)
-		return COMMAND_LINE_ERROR;
-
-	if (strcmp(arg->Name, FREERDP_CLIENT_FALLBACK_SWITCHBACK_ARG) == 0)
-		xfc->fallbackSwitchBack = (arg->Value != BoolValueFalse);
-
-	return 0;
-}
 
 static void xfreerdp_print_help(void)
 {
@@ -96,13 +76,10 @@ int main(int argc, char* argv[])
 	settings = context->settings;
 	xfc = (xfContext*)context;
 
-	status = freerdp_client_settings_parse_command_line_ex(
-	    context->settings, argc, argv, FALSE, xf_custom_args, ARRAYSIZE(xf_custom_args) - 1,
-	    xf_handle_custom_arg, xfc);
+	status = xf_client_settings_parse_command_line(xfc, argc, argv);
 	if (status)
 	{
-		rc = freerdp_client_settings_command_line_status_print_ex(settings, status, argc, argv,
-		                                                          xf_custom_args);
+		rc = xf_client_settings_command_line_status_print(xfc, status, argc, argv);
 
 		if (freerdp_settings_get_bool(settings, FreeRDP_ListMonitors))
 			xf_list_monitors(xfc);
